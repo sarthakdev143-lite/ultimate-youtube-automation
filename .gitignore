@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+backend/token.json
+backend/cookies.txt
+backend/tmp/*
+!backend/tmp/.gitkeep
+.DS_Store
+*.log
+client_secrets.json
+AGENT.md
