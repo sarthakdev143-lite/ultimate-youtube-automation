@@ -7,6 +7,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,10 +30,26 @@ TOKEN_PATH = BACKEND_DIR / "token.json"
 
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
-INSTAGRAM_HOST_RE = re.compile(
+# Supported platform URL patterns
+INSTAGRAM_RE = re.compile(
     r"^https?://(?:www\.)?instagram\.com/(?:reel|reels|p|tv)/[\w-]+",
     re.IGNORECASE,
 )
+SNAPCHAT_RE = re.compile(
+    r"^https?://(?:www\.)?snapchat\.com/spotlight/[\w-]+",
+    re.IGNORECASE,
+)
+
+Platform = Literal["instagram", "snapchat"]
+
+
+def detect_platform(url: str) -> Platform | None:
+    if INSTAGRAM_RE.match(url):
+        return "instagram"
+    if SNAPCHAT_RE.match(url):
+        return "snapchat"
+    return None
+
 
 app = FastAPI(title="YT Automation Factory API")
 
@@ -44,6 +61,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def cleanup_old_tmp_files(max_age_sec: int = 3600) -> None:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -137,13 +158,17 @@ def get_youtube_service():
     return build("youtube", "v3", credentials=creds)
 
 
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
+
 class DownloadBody(BaseModel):
     url: str = Field(..., min_length=1)
 
 
 class TextOverlay(BaseModel):
     text: str
-    position: str
+    position: str  # "top" | "bottom" | "center" | "top-left" | "top-right" | "bottom-left" | "bottom-right"
     font_size: int = Field(ge=8, le=200)
     color: str
     start_sec: float = Field(ge=0)
@@ -155,10 +180,24 @@ class TrimSpec(BaseModel):
     end_sec: float = Field(ge=0)
 
 
+class ColorGrade(BaseModel):
+    """All values: 0.0–3.0, default 1.0 (no change)."""
+    brightness: float = Field(default=1.0, ge=0.0, le=3.0)
+    contrast: float = Field(default=1.0, ge=0.0, le=3.0)
+    saturation: float = Field(default=1.0, ge=0.0, le=3.0)
+
+
 class EditBody(BaseModel):
     video_id: str
-    text_overlay: TextOverlay | None = None
+    # Editing features
+    text_overlays: list[TextOverlay] = Field(default_factory=list)
     trim: TrimSpec | None = None
+    color_grade: ColorGrade | None = None
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    mute_audio: bool = False
+    fade_in_sec: float = Field(default=0.0, ge=0.0)
+    fade_out_sec: float = Field(default=0.0, ge=0.0)
+    watermark_text: str = ""
 
 
 class UploadBody(BaseModel):
@@ -169,16 +208,48 @@ class UploadBody(BaseModel):
     privacy: str
 
 
+# ---------------------------------------------------------------------------
+# Position helper
+# ---------------------------------------------------------------------------
+
+def overlay_xy(position: str) -> str:
+    """Return ffmpeg drawtext x/y expression for a named position."""
+    positions = {
+        "top":          "x=(w-text_w)/2:y=50",
+        "bottom":       "x=(w-text_w)/2:y=h-text_h-50",
+        "center":       "x=(w-text_w)/2:y=(h-text_h)/2",
+        "top-left":     "x=30:y=30",
+        "top-right":    "x=w-text_w-30:y=30",
+        "bottom-left":  "x=30:y=h-text_h-30",
+        "bottom-right": "x=w-text_w-30:y=h-text_h-30",
+    }
+    return positions.get(position, "x=(w-text_w)/2:y=h-text_h-50")
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
 @app.post("/download")
-def download_reel(body: DownloadBody):
+def download_video(body: DownloadBody):
+    """Download a video from Instagram Reels or Snapchat Spotlight."""
     cleanup_old_tmp_files()
     url = body.url.strip()
-    if not INSTAGRAM_HOST_RE.match(url):
+
+    platform = detect_platform(url)
+    if platform is None:
         raise HTTPException(
             status_code=400,
-            detail="Invalid or unsupported Instagram URL. Use a reel or post URL from instagram.com.",
+            detail=(
+                "Invalid or unsupported URL. "
+                "Supported: Instagram Reels (instagram.com/reel/…) "
+                "and Snapchat Spotlights (snapchat.com/spotlight/…)."
+            ),
         )
-    if not COOKIES_PATH.is_file() or COOKIES_PATH.stat().st_size < 50:
+
+    # Instagram requires cookies; Snapchat Spotlight is typically public
+    use_cookies = platform == "instagram"
+    if use_cookies and (not COOKIES_PATH.is_file() or COOKIES_PATH.stat().st_size < 50):
         raise HTTPException(
             status_code=400,
             detail="Instagram cookies missing or empty. Export Netscape cookies to backend/cookies.txt.",
@@ -186,15 +257,17 @@ def download_reel(body: DownloadBody):
 
     video_id = str(uuid.uuid4())
     out_template = str(TMP_DIR / f"{video_id}.%(ext)s")
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-    ydl_opts = {
+    ydl_opts: dict = {
         "quiet": True,
         "no_warnings": True,
-        "cookiefile": str(COOKIES_PATH),
         "outtmpl": out_template,
         "merge_output_format": "mp4",
         "format": "bestvideo+bestaudio/best",
     }
+    if use_cookies:
+        ydl_opts["cookiefile"] = str(COOKIES_PATH)
 
     info = None
     try:
@@ -236,6 +309,7 @@ def download_reel(body: DownloadBody):
         "filename": video_path.name,
         "duration": duration,
         "thumbnail": thumb_b64,
+        "platform": platform,
     }
 
 
@@ -244,50 +318,128 @@ def edit_video(body: EditBody):
     cleanup_old_tmp_files()
     src = find_video_path(body.video_id)
 
+    # Validate trim
     trim = body.trim
-    overlay = body.text_overlay
-    has_overlay = overlay is not None and bool(overlay.text.strip())
-    if not trim and not has_overlay:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide a trim range and/or a non-empty text overlay.",
-        )
     if trim and trim.end_sec <= trim.start_sec:
         raise HTTPException(status_code=400, detail="Trim end must be greater than trim start.")
-    if has_overlay and overlay is not None:
-        if overlay.end_sec <= overlay.start_sec:
+
+    # Validate overlays
+    valid_positions = {"top", "bottom", "center", "top-left", "top-right", "bottom-left", "bottom-right"}
+    for ov in body.text_overlays:
+        if not ov.text.strip():
+            raise HTTPException(status_code=400, detail="Overlay text cannot be empty.")
+        if ov.end_sec <= ov.start_sec:
             raise HTTPException(status_code=400, detail="Text overlay end must be greater than start.")
-        if overlay.position not in ("top", "bottom", "center"):
-            raise HTTPException(status_code=400, detail='Position must be "top", "bottom", or "center".')
+        if ov.position not in valid_positions:
+            raise HTTPException(status_code=400, detail=f"Invalid overlay position: {ov.position}")
+
+    # Require at least one edit operation
+    has_overlays = len(body.text_overlays) > 0
+    has_trim = trim is not None
+    has_color = body.color_grade is not None
+    has_speed = abs(body.speed - 1.0) > 0.01
+    has_mute = body.mute_audio
+    has_fade = body.fade_in_sec > 0 or body.fade_out_sec > 0
+    has_watermark = bool(body.watermark_text.strip())
+
+    if not any([has_overlays, has_trim, has_color, has_speed, has_mute, has_fade, has_watermark]):
+        raise HTTPException(status_code=400, detail="Provide at least one edit operation.")
 
     edited_id = str(uuid.uuid4())
     out_path = TMP_DIR / f"{edited_id}.mp4"
 
+    # -----------------------------------------------------------------------
+    # Build ffmpeg video filter chain
+    # -----------------------------------------------------------------------
     vf_parts: list[str] = []
-    if has_overlay and overlay is not None:
-        fc = hex_to_ffmpeg_color(overlay.color)
-        pos = overlay.position
-        if pos == "top":
-            xy = "x=(w-text_w)/2:y=50"
-        elif pos == "bottom":
-            xy = "x=(w-text_w)/2:y=h-text_h-50"
-        else:
-            xy = "x=(w-text_w)/2:y=(h-text_h)/2"
-        esc = escape_drawtext(overlay.text.strip())
-        enable = f"between(t\\,{overlay.start_sec}\\,{overlay.end_sec})"
+
+    # 1. Color grading via `eq` filter
+    if has_color and body.color_grade:
+        cg = body.color_grade
         vf_parts.append(
-            f"drawtext=text='{esc}':fontsize={overlay.font_size}:fontcolor={fc}:{xy}:enable='{enable}'"
+            f"eq=brightness={cg.brightness - 1.0:.4f}"
+            f":contrast={cg.contrast:.4f}"
+            f":saturation={cg.saturation:.4f}"
         )
 
-    vf_arg = ",".join(vf_parts) if vf_parts else None
+    # 2. Speed change — video part (setpts)
+    if has_speed:
+        pts_factor = 1.0 / body.speed
+        vf_parts.append(f"setpts={pts_factor:.6f}*PTS")
 
+    # 3. Fade in / out (video)
+    if has_fade:
+        # We need video duration for fade-out; use a placeholder expression
+        if body.fade_in_sec > 0:
+            vf_parts.append(f"fade=t=in:st=0:d={body.fade_in_sec:.2f}")
+        if body.fade_out_sec > 0:
+            # Approximate: calculate start from trim if provided
+            fade_out_start = (trim.end_sec - trim.start_sec - body.fade_out_sec) if trim else -1
+            if fade_out_start > 0:
+                vf_parts.append(f"fade=t=out:st={fade_out_start:.2f}:d={body.fade_out_sec:.2f}")
+
+    # 4. Text overlays
+    for ov in body.text_overlays:
+        fc = hex_to_ffmpeg_color(ov.color)
+        xy = overlay_xy(ov.position)
+        esc = escape_drawtext(ov.text.strip())
+        enable = f"between(t\\,{ov.start_sec}\\,{ov.end_sec})"
+        vf_parts.append(
+            f"drawtext=text='{esc}':fontsize={ov.font_size}:fontcolor={fc}"
+            f":{xy}:enable='{enable}'"
+        )
+
+    # 5. Watermark (persistent bottom-right corner branding)
+    if has_watermark:
+        esc_wm = escape_drawtext(body.watermark_text.strip())
+        vf_parts.append(
+            f"drawtext=text='{esc_wm}':fontsize=28:fontcolor=0xFFFFFFAA"
+            f":x=w-text_w-20:y=h-text_h-20"
+        )
+
+    # -----------------------------------------------------------------------
+    # Build ffmpeg audio filter chain
+    # -----------------------------------------------------------------------
+    af_parts: list[str] = []
+
+    # Speed change — audio part (atempo supports 0.5–2.0; chain for wider range)
+    if has_speed:
+        speed = body.speed
+        if speed < 0.5:
+            af_parts += ["atempo=0.5", f"atempo={speed / 0.5:.4f}"]
+        elif speed > 2.0:
+            af_parts += ["atempo=2.0", f"atempo={speed / 2.0:.4f}"]
+        else:
+            af_parts.append(f"atempo={speed:.4f}")
+
+    # Audio fade
+    if has_fade:
+        if body.fade_in_sec > 0:
+            af_parts.append(f"afade=t=in:st=0:d={body.fade_in_sec:.2f}")
+        if body.fade_out_sec > 0:
+            fade_out_start = (trim.end_sec - trim.start_sec - body.fade_out_sec) if trim else -1
+            if fade_out_start > 0:
+                af_parts.append(f"afade=t=out:st={fade_out_start:.2f}:d={body.fade_out_sec:.2f}")
+
+    # -----------------------------------------------------------------------
+    # Assemble final ffmpeg command
+    # -----------------------------------------------------------------------
     cmd: list[str] = []
     if trim:
         cmd.extend(["-ss", str(trim.start_sec), "-to", str(trim.end_sec)])
     cmd.extend(["-i", str(src)])
-    if vf_arg:
-        cmd.extend(["-vf", vf_arg])
-    cmd.extend(["-c:a", "aac", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path)])
+
+    if has_mute:
+        cmd.extend(["-an"])  # strip audio entirely
+    else:
+        if af_parts:
+            cmd.extend(["-af", ",".join(af_parts)])
+        cmd.extend(["-c:a", "aac"])
+
+    if vf_parts:
+        cmd.extend(["-vf", ",".join(vf_parts)])
+
+    cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path)])
 
     run_ffmpeg(cmd)
 
@@ -307,8 +459,6 @@ def upload_to_youtube(body: UploadBody):
         )
     path = find_video_path(body.video_id)
 
-    status_map = {"public": "public", "unlisted": "unlisted", "private": "private"}
-
     youtube = get_youtube_service()
 
     request_body = {
@@ -318,7 +468,7 @@ def upload_to_youtube(body: UploadBody):
             "tags": body.tags[:30],
             "categoryId": "22",
         },
-        "status": {"privacyStatus": status_map[body.privacy]},
+        "status": {"privacyStatus": body.privacy},
     }
 
     mime, _ = mimetypes.guess_type(str(path))
