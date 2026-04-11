@@ -54,9 +54,9 @@ function Btn({ children, variant = "primary", className = "", ...p }: { variant?
   const base = "rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-40 disabled:cursor-not-allowed";
   const v = {
     primary: `${base} bg-emerald-600 text-white hover:bg-emerald-500`,
-    ghost:   `${base} border text-sm hover:bg-white/5`,
-    danger:  `${base} border border-red-800/50 text-red-400 hover:bg-red-950/30`,
-    ai:      `${base} bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-500 hover:to-indigo-500`,
+    ghost: `${base} border text-sm hover:bg-white/5`,
+    danger: `${base} border border-red-800/50 text-red-400 hover:bg-red-950/30`,
+    ai: `${base} bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-500 hover:to-indigo-500`,
   };
   return <button type="button" {...p} className={`${v[variant]} ${className}`} style={variant === "ghost" ? { borderColor: "var(--border)", color: "var(--text-muted)" } : undefined}>{children}</button>;
 }
@@ -128,6 +128,8 @@ export default function StudioPage() {
   const [platform, setPlatform] = useState<string | null>(null);
   const [origTitle, setOrigTitle] = useState("");
   const [origUploader, setOrigUploader] = useState("");
+  const [origDesc, setOrigDesc] = useState("");
+  const [origTags, setOrigTags] = useState<string[]>([]);
   const [srcUrl, setSrcUrl] = useState("");
 
   // Batch queue
@@ -217,7 +219,7 @@ export default function StudioPage() {
 
   // ── download ─────────────────────────────────────────────────────────────
 
-  const doDownload = async (targetUrl: string): Promise<{ video_id: string; duration: number; thumbnail: string; platform: string; title: string; uploader: string } | null> => {
+  const doDownload = async (targetUrl: string): Promise<{ video_id: string; duration: number; thumbnail: string; platform: string; title: string; uploader: string; description?: string; tags?: string[] } | null> => {
     const res = await fetch(`${API}/download`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: targetUrl.trim() }) });
     if (!res.ok) throw new Error(await apiError(res));
     return res.json();
@@ -233,6 +235,7 @@ export default function StudioPage() {
       setVideoId(data.video_id); setActiveId(data.video_id);
       setDuration(d); setTrimStart(0); setTrimEnd(d || 60);
       setPlatform(data.platform); setOrigTitle(data.title); setOrigUploader(data.uploader);
+      setOrigDesc(data.description || ""); setOrigTags(data.tags || []);
       setSrcUrl(url.trim());
       setThumb(data.thumbnail ? `data:image/jpeg;base64,${data.thumbnail}` : null);
       resetEdit();
@@ -327,11 +330,13 @@ Platform: ${platform || "unknown"}
 Original title: ${origTitle || "untitled"}
 Uploader: ${origUploader || "unknown"}
 Duration: ${duration.toFixed(0)}s
+Description: ${origDesc || "Not provided"}
+Tags: ${origTags.length > 0 ? origTags.join(", ") : "Not provided"}
 
 Generate a JSON object with these exact keys:
-- "title": engaging YouTube title, max 70 characters
-- "description": SEO-optimized description, 2-3 sentences  
-- "tags": array of 10 relevant hashtags (strings, no # symbol)
+- "title": engaging catchy YouTube title with suitable emojis, max 90 characters
+- "description": SEO-optimized description
+- "tags": array of relevant hashtags (strings, no # symbol)
 
 Respond with ONLY valid JSON, no markdown.`;
       const resp = await puter.ai.chat(prompt);

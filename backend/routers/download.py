@@ -101,4 +101,8 @@ def download_video(body: DownloadBody):
         "platform_label": PLATFORM_LABELS.get(platform, platform),
         "title": info.get("title") or "",
         "uploader": info.get("uploader") or "",
+        "description": info.get("description") or "",
+        "tags": info.get("tags") or [],
+        "view_count": info.get("view_count"),
+        "like_count": info.get("like_count"),
     }
