@@ -4,3 +4,8 @@ google-auth-oauthlib>=1.2.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.12
+APScheduler>=3.10.0
+pillow>=10.0.0
+
+# Optional — install for Whisper auto-subtitles (CPU-only, ~1 GB model download on first use):
+# faster-whisper>=1.0.0
