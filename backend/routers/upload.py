@@ -10,7 +10,7 @@ from googleapiclient.http import MediaFileUpload
 from pydantic import BaseModel, Field
 
 from db import get_history_by_id, insert_history, update_history_status
-from utils import TMP_DIR, cleanup_old_tmp_files, find_video_path, get_youtube_service
+from utils import BACKEND_DIR, TMP_DIR, authenticate_youtube_account, cleanup_old_tmp_files, find_video_path, get_youtube_service
 
 router = APIRouter()
 
@@ -24,6 +24,7 @@ class UploadBody(BaseModel):
     source_url: str = ""
     platform: str = ""
     scheduled_at: str | None = None  # ISO 8601, e.g. "2024-12-01T18:00:00"
+    youtube_account: str = "default"
 
 
 @router.post("/upload")
@@ -48,11 +49,12 @@ def upload_to_youtube(body: UploadBody):
             title=body.title or "Untitled",
             status="scheduled",
             scheduled_at=body.scheduled_at,
+            youtube_account=body.youtube_account,
         )
         return {"scheduled": True, "history_id": history_id, "scheduled_at": body.scheduled_at}
 
     # ── Immediate upload ──────────────────────────────────────────────────
-    youtube = get_youtube_service()
+    youtube = get_youtube_service(body.youtube_account)
     request_body = {
         "snippet": {
             "title": (body.title or "Untitled")[:100],
@@ -93,8 +95,33 @@ def upload_to_youtube(body: UploadBody):
         title=body.title or "Untitled",
         youtube_url=yt_url,
         status="uploaded",
+        youtube_account=body.youtube_account,
     )
     return {"youtube_url": yt_url}
+
+
+class AccountBody(BaseModel):
+    account: str
+
+@router.get("/youtube/accounts")
+def get_youtube_accounts():
+    accounts = set(["default"])
+    for p in BACKEND_DIR.glob("token_*.json"):
+        name = p.stem.replace("token_", "")
+        accounts.add(name)
+    return {"accounts": sorted(list(accounts))}
+
+@router.post("/youtube/accounts")
+def add_youtube_account(body: AccountBody):
+    if not body.account.strip():
+        raise HTTPException(status_code=400, detail="Account name is required.")
+    try:
+        authenticate_youtube_account(body.account.strip())
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"success": True, "account": body.account.strip()}
 
 
 @router.get("/upload/status/{history_id}")

@@ -15,7 +15,6 @@ BACKEND_DIR = Path(__file__).resolve().parent
 TMP_DIR = BACKEND_DIR / "tmp"
 COOKIES_PATH = BACKEND_DIR / "cookies.txt"
 CLIENT_SECRETS_PATH = BACKEND_DIR / "client_secrets.json"
-TOKEN_PATH = BACKEND_DIR / "token.json"
 
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -139,7 +138,32 @@ def overlay_xy(position: str) -> str:
 # YouTube service
 # ---------------------------------------------------------------------------
 
-def get_youtube_service():
+def get_token_path(account: str) -> Path:
+    if account == "default" and (BACKEND_DIR / "token.json").is_file():
+        return BACKEND_DIR / "token.json"
+    return BACKEND_DIR / f"token_{account}.json"
+
+
+def authenticate_youtube_account(account: str):
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    
+    if not CLIENT_SECRETS_PATH.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="YouTube OAuth not configured. Add client_secrets.json (see README).",
+        )
+        
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS_PATH), YOUTUBE_SCOPES)
+        creds = flow.run_local_server(port=0)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"OAuth setup failed: {exc}") from exc
+        
+    token_path = get_token_path(account)
+    token_path.write_text(creds.to_json(), encoding="utf-8")
+
+
+def get_youtube_service(account: str = "default"):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
@@ -151,8 +175,10 @@ def get_youtube_service():
             detail="YouTube OAuth not configured. Add client_secrets.json (see README).",
         )
     creds = None
-    if TOKEN_PATH.is_file():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), YOUTUBE_SCOPES)
+    token_path = get_token_path(account)
+    
+    if token_path.is_file():
+        creds = Credentials.from_authorized_user_file(str(token_path), YOUTUBE_SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
@@ -165,5 +191,5 @@ def get_youtube_service():
                 creds = flow.run_local_server(port=0)
             except Exception as exc:
                 raise HTTPException(status_code=503, detail=f"OAuth setup failed: {exc}") from exc
-        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        token_path.write_text(creds.to_json(), encoding="utf-8")
     return build("youtube", "v3", credentials=creds)

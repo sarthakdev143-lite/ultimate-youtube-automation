@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -167,11 +167,48 @@ export default function StudioPage() {
   const [presetsOpen, setPresetsOpen] = useState(false);
 
   // Upload
+  const [youtubeAccounts, setYoutubeAccounts] = useState<string[]>(["default"]);
+  const [selectedYtAccount, setSelectedYtAccount] = useState("default");
+  const [addingAccount, setAddingAccount] = useState(false);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [tagsRaw, setTagsRaw] = useState("");
   const [privacy, setPrivacy] = useState<Privacy>("public");
   const [scheduledAt, setScheduledAt] = useState("");
+
+  useEffect(() => {
+    fetchYtAccounts();
+  }, []);
+
+  const fetchYtAccounts = async () => {
+    try {
+      const res = await fetch(`${API}/youtube/accounts`);
+      if (res.ok) {
+        const data = await res.json();
+        setYoutubeAccounts(data.accounts || ["default"]);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const onAddYtAccount = async () => {
+    const name = window.prompt("Enter a unique name for this YouTube account (e.g. gaming_channel):");
+    if (!name || !name.trim()) return;
+    setAddingAccount(true);
+    try {
+      const res = await fetch(`${API}/youtube/accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: name.trim() })
+      });
+      if (!res.ok) throw new Error(await apiError(res));
+      await fetchYtAccounts();
+      setSelectedYtAccount(name.trim());
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to add account");
+    } finally {
+      setAddingAccount(false);
+    }
+  };
 
   // Status
   const [dlLoading, setDlLoading] = useState(false);
@@ -408,6 +445,7 @@ Respond with ONLY valid JSON, no markdown.`;
           tags: tagsRaw.split(",").map(t => t.trim()).filter(Boolean),
           privacy, source_url: srcUrl, platform: platform ?? "",
           scheduled_at: scheduledAt || null,
+          youtube_account: selectedYtAccount,
         }),
       });
       if (!res.ok) throw new Error(await apiError(res));
@@ -641,6 +679,21 @@ Respond with ONLY valid JSON, no markdown.`;
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>Powered by puter.js (GPT-4o, free)</span>
         </div>
         <ErrMsg msg={aiErr} />
+
+        <div className="flex gap-4">
+          <Field label="YouTube Account">
+            <div className="flex items-center gap-2">
+              <select value={selectedYtAccount} onChange={e => setSelectedYtAccount(e.target.value)}
+                className="rounded-lg border px-2 py-2 text-sm max-w-48"
+                style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <Btn variant="ghost" onClick={onAddYtAccount} disabled={addingAccount}>
+                 {addingAccount ? "Waiting for browser..." : "+ Add Account"}
+              </Btn>
+            </div>
+          </Field>
+        </div>
 
         <Inp label="Title" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Your video title" />
         <Field label="Description">

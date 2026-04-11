@@ -21,6 +21,7 @@ def _process_scheduled_uploads() -> None:
         history_id: int = row["id"]
         video_id: str = row["video_id"]
         title: str = row["title"] or "Untitled"
+        youtube_account: str = row.get("youtube_account", "default")
 
         # Mark as processing to avoid double-firing
         update_history_status(history_id, "processing")
@@ -33,7 +34,7 @@ def _process_scheduled_uploads() -> None:
             continue
 
         try:
-            youtube = get_youtube_service()
+            youtube = get_youtube_service(youtube_account)
             request_body = {
                 "snippet": {
                     "title": title[:100],

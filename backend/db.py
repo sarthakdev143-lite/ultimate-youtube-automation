@@ -36,17 +36,22 @@ def init_db() -> None:
     with get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS history (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                video_id     TEXT    NOT NULL,
-                source_url   TEXT    DEFAULT '',
-                platform     TEXT    DEFAULT '',
-                title        TEXT    DEFAULT '',
-                youtube_url  TEXT,
-                status       TEXT    NOT NULL DEFAULT 'uploaded',
-                scheduled_at TEXT,
-                created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id        TEXT    NOT NULL,
+                source_url      TEXT    DEFAULT '',
+                platform        TEXT    DEFAULT '',
+                title           TEXT    DEFAULT '',
+                youtube_url     TEXT,
+                status          TEXT    NOT NULL DEFAULT 'uploaded',
+                scheduled_at    TEXT,
+                created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+                youtube_account TEXT    DEFAULT 'default'
             )
         """)
+        try:
+            conn.execute("ALTER TABLE history ADD COLUMN youtube_account TEXT DEFAULT 'default'")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         conn.execute("""
             CREATE TABLE IF NOT EXISTS presets (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,13 +74,14 @@ def insert_history(
     youtube_url: str | None = None,
     status: str = "uploaded",
     scheduled_at: str | None = None,
+    youtube_account: str = "default",
 ) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO history
-               (video_id, source_url, platform, title, youtube_url, status, scheduled_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (video_id, source_url, platform, title, youtube_url, status, scheduled_at),
+               (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account),
         )
         return cur.lastrowid  # type: ignore[return-value]
 
