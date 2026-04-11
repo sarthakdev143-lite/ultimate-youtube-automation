@@ -5,9 +5,13 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Legacy tokens kept for compatibility
         surface: "#0a0a0a",
-        accent: "#e63946",
-        success: "#c9a84c",
+        accent:  "#10b981",
+        success: "#10b981",
+      },
+      fontFamily: {
+        sans: ["Inter", "system-ui", "sans-serif"],
       },
     },
   },
