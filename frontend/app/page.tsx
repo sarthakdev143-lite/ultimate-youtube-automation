@@ -130,6 +130,8 @@ export default function StudioPage() {
   const [origUploader, setOrigUploader] = useState("");
   const [origDesc, setOrigDesc] = useState("");
   const [origTags, setOrigTags] = useState<string[]>([]);
+  const [origViewCount, setOrigViewCount] = useState<number | null>(null);
+  const [origLikeCount, setOrigLikeCount] = useState<number | null>(null);
   const [srcUrl, setSrcUrl] = useState("");
 
   // Batch queue
@@ -219,7 +221,7 @@ export default function StudioPage() {
 
   // ── download ─────────────────────────────────────────────────────────────
 
-  const doDownload = async (targetUrl: string): Promise<{ video_id: string; duration: number; thumbnail: string; platform: string; title: string; uploader: string; description?: string; tags?: string[] } | null> => {
+  const doDownload = async (targetUrl: string): Promise<{ video_id: string; duration: number; thumbnail: string; platform: string; title: string; uploader: string; description?: string; tags?: string[]; view_count?: number; like_count?: number } | null> => {
     const res = await fetch(`${API}/download`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: targetUrl.trim() }) });
     if (!res.ok) throw new Error(await apiError(res));
     return res.json();
@@ -236,6 +238,7 @@ export default function StudioPage() {
       setDuration(d); setTrimStart(0); setTrimEnd(d || 60);
       setPlatform(data.platform); setOrigTitle(data.title); setOrigUploader(data.uploader);
       setOrigDesc(data.description || ""); setOrigTags(data.tags || []);
+      setOrigViewCount(data.view_count ?? null); setOrigLikeCount(data.like_count ?? null);
       setSrcUrl(url.trim());
       setThumb(data.thumbnail ? `data:image/jpeg;base64,${data.thumbnail}` : null);
       resetEdit();
@@ -332,6 +335,8 @@ Uploader: ${origUploader || "unknown"}
 Duration: ${duration.toFixed(0)}s
 Description: ${origDesc || "Not provided"}
 Tags: ${origTags.length > 0 ? origTags.join(", ") : "Not provided"}
+Views: ${origViewCount ?? "unknown"}
+Likes: ${origLikeCount ?? "unknown"}
 
 Generate a JSON object with these exact keys:
 - "title": engaging catchy YouTube title with suitable emojis, max 90 characters
@@ -339,7 +344,23 @@ Generate a JSON object with these exact keys:
 - "tags": array of relevant hashtags (strings, no # symbol)
 
 Respond with ONLY valid JSON, no markdown.`;
-      const resp = await puter.ai.chat(prompt);
+
+      let resp;
+      try {
+        // Try providing the thumbnail image as part of the messages array (OpenAI format, supported by many AI proxies)
+        const messages = [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            ...(thumb ? [{ type: "image_url", image_url: { url: thumb } }] as const : [])
+          ]
+        }];
+        resp = await puter.ai.chat(messages);
+      } catch (e) {
+        // Fallback to simple text prompt if advanced format fails
+        resp = await puter.ai.chat(prompt);
+      }
+
       const raw = typeof resp === "string" ? resp : (resp?.message?.content?.[0]?.text ?? resp?.message?.content ?? "{}");
       const cleaned = raw.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleaned);
