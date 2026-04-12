@@ -1,10 +1,11 @@
 """Upload router — immediate + scheduled uploads, and video streaming."""
+from html import escape
 import json
 import mimetypes
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 from pydantic import BaseModel, Field
@@ -168,17 +169,80 @@ class AccountExchangeBody(BaseModel):
     code: str
 
 @router.get("/youtube/accounts/auth-url")
-def get_auth_url(account: str):
+def get_auth_url(account: str, request: Request):
     if not account.strip():
         raise HTTPException(status_code=400, detail="Account name is required.")
-    return {"auth_url": get_oauth_auth_url(account.strip())}
+    callback_url = str(request.url_for("youtube_oauth_callback"))
+    return {"auth_url": get_oauth_auth_url(account.strip(), callback_url)}
 
 @router.post("/youtube/accounts/exchange")
 def exchange_code(body: AccountExchangeBody):
     if not body.account.strip() or not body.code.strip():
         raise HTTPException(status_code=400, detail="Account and code are required.")
-    exchange_oauth_code(body.account.strip(), body.code.strip())
-    return {"success": True, "account": body.account.strip()}
+    account = exchange_oauth_code(body.account.strip(), body.code.strip())
+    return {"success": True, "account": account}
+
+
+def _oauth_callback_html(status: str, message: str, account: str = "") -> str:
+    safe_status = escape(status)
+    safe_message = escape(message)
+    safe_account = escape(account)
+    return f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>YouTube OAuth</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; background: #0a0a0a; color: #e5e5e5; padding: 32px; }}
+      .card {{ max-width: 560px; margin: 48px auto; padding: 24px; border: 1px solid #2a2a2a; border-radius: 16px; background: #111111; }}
+      .ok {{ color: #10b981; }}
+      .err {{ color: #f87171; }}
+      p {{ line-height: 1.5; }}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1 class="{ 'ok' if status == 'success' else 'err' }">{safe_status.title()}</h1>
+      <p>{safe_message}</p>
+      <p>You can close this tab.</p>
+    </div>
+    <script>
+      (function() {{
+        if (window.opener) {{
+          window.opener.postMessage({{
+            type: "youtube-oauth-complete",
+            status: "{safe_status}",
+            account: "{safe_account}",
+            message: "{safe_message}"
+          }}, "*");
+        }}
+        if ("{safe_status}" === "success") {{
+          setTimeout(function() {{ window.close(); }}, 1200);
+        }}
+      }})();
+    </script>
+  </body>
+</html>"""
+
+
+@router.get("/youtube/oauth/callback", response_class=HTMLResponse, name="youtube_oauth_callback")
+def youtube_oauth_callback(request: Request, error: str | None = None):
+    if error:
+        return HTMLResponse(
+            _oauth_callback_html("error", f"Google OAuth failed: {error}"),
+            status_code=400,
+        )
+    try:
+        account = exchange_oauth_code("", str(request.url))
+    except HTTPException as exc:
+        return HTMLResponse(
+            _oauth_callback_html("error", str(exc.detail)),
+            status_code=exc.status_code,
+        )
+    return HTMLResponse(
+        _oauth_callback_html("success", f"Connected YouTube account: {account}", account),
+        status_code=200,
+    )
 
 @router.get("/quota/{account}")
 def get_quota(account: str):
@@ -200,7 +264,21 @@ def get_upload_status(history_id: int):
 
 
 @router.get("/video/{video_id}/thumbnail")
-def get_thumbnail(video_id: str):
+def get_thumbnail(video_id: str, t: float | None = None):
+    if t is not None:
+        try:
+            video_path = find_video_path(video_id)
+            out_path = TMP_DIR / f"{video_id}_t{t}.jpg"
+            if not out_path.is_file():
+                run_ffmpeg([
+                    "-ss", str(t), "-i", str(video_path), "-frames:v", "1",
+                    "-vf", "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
+                    str(out_path)
+                ])
+            return FileResponse(str(out_path), media_type="image/jpeg")
+        except Exception:
+            pass
+            
     thumb = TMP_DIR / f"{video_id}_thumb.jpg"
     if not thumb.is_file():
         raise HTTPException(status_code=404, detail="Thumbnail not found.")

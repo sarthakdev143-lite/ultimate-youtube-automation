@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -40,6 +40,15 @@ const PLATFORM_EMOJI: Record<string, string> = {
   instagram: "📸", snapchat: "👻", tiktok: "🎵", youtube: "▶️", twitter: "🐦", reddit: "🤖", pinterest: "📌",
 };
 
+function parseApiDate(value: string | null): Date | null {
+  if (!value) return null;
+  const normalized = value.includes(" ") && !value.includes("T")
+    ? value.replace(" ", "T") + "Z"
+    : value;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export default function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [disk, setDisk] = useState<DiskStats | null>(null);
@@ -53,6 +62,7 @@ export default function HistoryPage() {
     setLoading(true); setErr(null);
     try {
       const [hRes, dRes] = await Promise.all([fetch(`${API}/history`), fetch(`${API}/stats/disk`)]);
+      if (!hRes.ok || !dRes.ok) throw new Error("Failed to load history data");
       const h = await hRes.json();
       const d = await dRes.json();
       setItems(h.items ?? []);
@@ -65,9 +75,19 @@ export default function HistoryPage() {
   useEffect(() => { load(); }, []);
 
   const deleteItem = async (id: number) => {
-    await fetch(`${API}/history/${id}`, { method: "DELETE" });
+    setErr(null);
+    const res = await fetch(`${API}/history/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      setErr("Failed to delete history entry.");
+      return;
+    }
     setItems(prev => prev.filter(i => i.id !== id));
     setExpandedAnalytics(prev => { const s = new Set(prev); s.delete(id); return s; });
+    setAnalyticsCache(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const toggleAnalytics = async (item: HistoryItem) => {
@@ -155,9 +175,11 @@ export default function HistoryPage() {
                 const analData = analyticsCache[item.id];
                 const isExpanded = expandedAnalytics.has(item.id);
                 const canAnalyze = item.status === "uploaded" && !!item.youtube_url;
+                const scheduledDate = parseApiDate(item.scheduled_at);
+                const createdDate = parseApiDate(item.created_at);
                 return (
-                  <>
-                    <tr key={item.id}
+                  <Fragment key={item.id}>
+                    <tr
                       className="border-b transition hover:bg-white/5"
                       style={{ borderColor: "var(--border)", background: idx % 2 === 0 ? "var(--surface)" : "var(--surface2)" }}>
                       <td className="px-4 py-3 max-w-[180px]">
@@ -171,15 +193,15 @@ export default function HistoryPage() {
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium ${STATUS_COLOR[item.status] ?? "text-neutral-400"}`}>
                           {item.status}
-                          {item.scheduled_at && item.status === "scheduled" && (
+                          {scheduledDate && item.status === "scheduled" && (
                             <span className="block text-neutral-500 font-normal">
-                              {new Date(item.scheduled_at).toLocaleString()}
+                              {scheduledDate.toLocaleString()}
                             </span>
                           )}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
-                        {new Date(item.created_at).toLocaleDateString()}
+                        {createdDate ? createdDate.toLocaleDateString() : "â€”"}
                       </td>
                       <td className="px-4 py-3">
                         {item.youtube_url ? (
@@ -202,7 +224,7 @@ export default function HistoryPage() {
                       </td>
                     </tr>
                     {isExpanded && (
-                      <tr key={`${item.id}-analytics`} style={{ background: idx % 2 === 0 ? "var(--surface)" : "var(--surface2)" }}>
+                      <tr style={{ background: idx % 2 === 0 ? "var(--surface)" : "var(--surface2)" }}>
                         <td colSpan={7} className="px-4 pb-3">
                           {analData === "loading" ? (
                             <p className="text-xs" style={{ color: "var(--text-muted)" }}>Fetching stats…</p>
@@ -223,7 +245,7 @@ export default function HistoryPage() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

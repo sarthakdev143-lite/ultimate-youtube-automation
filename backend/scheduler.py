@@ -6,7 +6,7 @@ import mimetypes
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from db import get_scheduled_pending, update_history_status
-from utils import find_video_path, get_youtube_service
+from utils import find_video_path, get_youtube_service, increment_quota
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,7 @@ def _process_scheduled_uploads() -> None:
             )
             vid = insert.get("id")
             yt_url = f"https://www.youtube.com/watch?v={vid}" if vid else None
+            increment_quota(youtube_account, 1600)
             update_history_status(history_id, "uploaded", yt_url)
             logger.info("Scheduled upload done: history=%s yt=%s", history_id, yt_url)
             # Fire webhook

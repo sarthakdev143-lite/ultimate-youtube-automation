@@ -1,8 +1,8 @@
 """Batch pipeline router — Download→Upload in a background task."""
+from datetime import datetime, timedelta
 import json
 import logging
 import mimetypes
-import time
 import uuid
 from typing import Literal
 
@@ -40,9 +40,17 @@ def _run_pipeline(batch_id: str, items: list[dict], body: BatchRunBody) -> None:
         video_id = item["video_id"]
         history_id = item["history_id"]
 
-        # Stagger
-        if idx > 0 and body.schedule_offset_minutes > 0:
-            time.sleep(body.schedule_offset_minutes * 60)
+        # Calculate when this item should run
+        run_at = datetime.utcnow() + timedelta(minutes=idx * body.schedule_offset_minutes)
+
+        if body.schedule_offset_minutes > 0 and idx > 0:
+            # WARNING: Stagger values >5 minutes will hold a threadpool worker.
+            # For production use, set schedule_offset_minutes <= 5 or use the
+            # scheduled upload feature instead.
+            import time as _time
+            wait_sec = (run_at - datetime.utcnow()).total_seconds()
+            if wait_sec > 0:
+                _time.sleep(wait_sec)
 
         # Download
         out_template = str(TMP_DIR / f"{video_id}.%(ext)s")
@@ -133,6 +141,11 @@ def run_batch(body: BatchRunBody, background_tasks: BackgroundTasks):
     """Start a batch download+upload pipeline."""
     if not body.urls:
         raise HTTPException(status_code=400, detail="No URLs provided.")
+    if body.schedule_offset_minutes > 60:
+        raise HTTPException(
+            status_code=400,
+            detail="schedule_offset_minutes cannot exceed 60. For longer delays, use the scheduled upload feature."
+        )
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     cleanup_old_tmp_files()

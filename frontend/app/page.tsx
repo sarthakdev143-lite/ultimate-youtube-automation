@@ -88,8 +88,8 @@ function Toggle({ label, checked, onChange, disabled }: { label: string; checked
     <div className="flex items-center justify-between">
       <span className="text-xs" style={{ color: "var(--text-muted)" }}>{label}</span>
       <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)}
-        className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${checked ? "bg-emerald-600" : "bg-neutral-700"}`}>
-        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-0.5" : "-translate-x-4"}`} />
+        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-40 ${checked ? "bg-emerald-600" : "bg-neutral-700"}`}>
+        <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-6" : "translate-x-1"}`} />
       </button>
     </div>
   );
@@ -210,7 +210,7 @@ export default function StudioPage() {
   const [oauthAccountName, setOauthAccountName] = useState("");
   const [oauthUrl, setOauthUrl] = useState("");
   const [oauthCode, setOauthCode] = useState("");
-  const [oauthStep, setOauthStep] = useState<"idle" | "url" | "code">("idle");
+  const [oauthOpen, setOauthOpen] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthErr, setOauthErr] = useState<string | null>(null);
   // Pipeline presets
@@ -230,6 +230,12 @@ export default function StudioPage() {
     fetchYtAccounts();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (batchPollRef.current) clearInterval(batchPollRef.current);
+    };
+  }, []);
+
   const fetchYtAccounts = async () => {
     try {
       const res = await fetch(`${API}/youtube/accounts`);
@@ -240,22 +246,56 @@ export default function StudioPage() {
     } catch { /* ignore */ }
   };
 
+  useEffect(() => {
+    const onOauthMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.type !== "youtube-oauth-complete") return;
+
+      void (async () => {
+        if (data.status === "success") {
+          await fetchYtAccounts();
+          if (typeof data.account === "string" && data.account.trim()) {
+            setSelectedYtAccount(data.account.trim());
+          }
+          setOauthOpen(false);
+          setOauthCode("");
+          setOauthAccountName("");
+          setOauthUrl("");
+          setOauthErr(null);
+          setOauthLoading(false);
+          return;
+        }
+
+        if (data.status === "error") {
+          setOauthOpen(true);
+          setOauthLoading(false);
+          setOauthErr(typeof data.message === "string" ? data.message : "OAuth failed.");
+        }
+      })();
+    };
+
+    window.addEventListener("message", onOauthMessage);
+    return () => window.removeEventListener("message", onOauthMessage);
+  }, []);
+
   const onAddYtAccount = async () => {
+    if (!oauthAccountName.trim()) {
+      setOauthErr("Enter an account name first.");
+      return;
+    }
     setOauthErr(null);
-    const name = window.prompt("Enter a unique name for this YouTube account (e.g. gaming_channel):");
-    if (!name || !name.trim()) return;
-    setOauthAccountName(name.trim());
     setOauthLoading(true);
-    setOauthStep("url");
     try {
-      const res = await fetch(`${API}/youtube/accounts/auth-url?account=${encodeURIComponent(name.trim())}`);
+      const res = await fetch(
+        `${API}/youtube/accounts/auth-url?account=${encodeURIComponent(oauthAccountName.trim())}`
+      );
       if (!res.ok) throw new Error(await apiError(res));
       const data = await res.json();
       setOauthUrl(data.auth_url);
       window.open(data.auth_url, "_blank");
+      setOauthOpen(true);
     } catch (e) {
       setOauthErr(e instanceof Error ? e.message : "Failed to get auth URL");
-      setOauthStep("idle");
     } finally {
       setOauthLoading(false);
     }
@@ -263,19 +303,27 @@ export default function StudioPage() {
 
   const confirmOauthCode = async () => {
     if (!oauthCode.trim()) return;
-    setOauthLoading(true); setOauthErr(null);
+    setOauthLoading(true);
+    setOauthErr(null);
     try {
       const res = await fetch(`${API}/youtube/accounts/exchange`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ account: oauthAccountName, code: oauthCode.trim() })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: oauthAccountName.trim(), code: oauthCode.trim() }),
       });
       if (!res.ok) throw new Error(await apiError(res));
       await fetchYtAccounts();
-      setSelectedYtAccount(oauthAccountName);
-      setOauthStep("idle"); setOauthCode(""); setOauthAccountName(""); setOauthUrl("");
+      setSelectedYtAccount(oauthAccountName.trim());
+      setOauthOpen(false);
+      setOauthCode("");
+      setOauthAccountName("");
+      setOauthUrl("");
+      setOauthErr(null);
     } catch (e) {
-      setOauthErr(e instanceof Error ? e.message : "Invalid code");
-    } finally { setOauthLoading(false); }
+      setOauthErr(e instanceof Error ? e.message : "Invalid code. Try again.");
+    } finally {
+      setOauthLoading(false);
+    }
   };
 
   // Status
@@ -381,15 +429,23 @@ export default function StudioPage() {
 
   const processQueue = async () => {
     setBatching(true);
-    for (const item of queue) {
-      if (item.status !== "pending") continue;
+    // Take a snapshot and work on it locally — do not rely on React state
+    // inside the async loop
+    const snapshot = queue.filter(q => q.status === "pending");
+    for (const item of snapshot) {
       setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: "processing" } : q));
       try {
         const data = await doDownload(item.url);
-        const label = data?.platform ? `${PLATFORM_EMOJI[data.platform] ?? ""} ${data.title || item.url.slice(0, 40)}` : item.url.slice(0, 40);
+        const label = data?.platform
+          ? `${PLATFORM_EMOJI[data.platform] ?? ""} ${data.title || item.url.slice(0, 40)}`
+          : item.url.slice(0, 40);
         setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: "done", label } : q));
       } catch (e) {
-        setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: "error", error: e instanceof Error ? e.message : "Failed" } : q));
+        setQueue(prev => prev.map(q =>
+          q.id === item.id
+            ? { ...q, status: "error", error: e instanceof Error ? e.message : "Failed" }
+            : q
+        ));
       }
     }
     setBatching(false);
@@ -462,7 +518,7 @@ Tags: ${origTags.length > 0 ? origTags.join(", ") : "Not provided"}
 Views: ${origViewCount ?? "unknown"}
 Likes: ${origLikeCount ?? "unknown"}
 
-Generate a JSON object with these exact keys:
+Generate a JSON object with these exact keys: (Strictly in ENGLISH DATA)
 - "title": engaging catchy YouTube title with suitable emojis, max 90 characters
 - "description": SEO-optimized description
 - "tags": array of relevant hashtags (strings, no # symbol)
@@ -854,28 +910,59 @@ Respond with ONLY valid JSON, no markdown.`;
                     style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
                     {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
                   </select>
-                  <Btn variant="ghost" onClick={onAddYtAccount} disabled={oauthLoading}>
-                    {oauthLoading ? "Opening…" : "+ Add Account"}
-                  </Btn>
                 </div>
               </Field>
             </div>
 
-            {/* Headless OAuth flow */}
-            {oauthStep === "url" && (
-              <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)", background: "var(--surface2)" }}>
-                <p className="text-sm font-medium" style={{ color: "var(--text)" }}>🔑 Authorize <strong>{oauthAccountName}</strong></p>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>A Google sign-in page has opened. Sign in, then copy the code shown and paste it below.</p>
-                {oauthUrl && <a href={oauthUrl} target="_blank" rel="noreferrer" className="text-xs text-emerald-400 underline">Re-open auth page ↗</a>}
-                <div className="flex gap-2">
-                  <input value={oauthCode} onChange={e => setOauthCode(e.target.value)} placeholder="Paste Google code here…"
-                    className={`${inputCls} flex-1`} style={inputStyle} />
-                  <Btn onClick={() => { setOauthStep("code"); confirmOauthCode(); }} disabled={!oauthCode.trim() || oauthLoading}>Confirm</Btn>
-                  <Btn variant="danger" onClick={() => { setOauthStep("idle"); setOauthCode(""); }}>Cancel</Btn>
-                </div>
-                {oauthErr && <p className="text-xs text-red-400">{oauthErr}</p>}
+            {/* Headless OAuth — inline account name input + code entry */}
+            <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)", background: "var(--surface2)" }}>
+              <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Add YouTube Account</p>
+              <div className="flex gap-2">
+                <input
+                  value={oauthAccountName}
+                  onChange={e => setOauthAccountName(e.target.value)}
+                  placeholder="Account name (e.g. gaming_channel)"
+                  className={`${inputCls} flex-1`}
+                  style={inputStyle}
+                  disabled={oauthLoading}
+                />
+                <Btn onClick={onAddYtAccount} disabled={oauthLoading || !oauthAccountName.trim()}>
+                  {oauthLoading && !oauthOpen ? "Opening…" : "Get Auth URL"}
+                </Btn>
               </div>
-            )}
+
+              {oauthOpen && (
+                <div className="space-y-2">
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Google sign-in opened in a new tab. Finish sign-in there and this page should update automatically.
+                    If it does not, paste the callback URL or Google code below.
+                  </p>
+                  {oauthUrl && (
+                    <a href={oauthUrl} target="_blank" rel="noreferrer" className="text-xs text-emerald-400 underline">
+                      Re-open auth page ↗
+                    </a>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      value={oauthCode}
+                      onChange={e => setOauthCode(e.target.value)}
+                      placeholder="Paste callback URL or Google code here…"
+                      className={`${inputCls} flex-1`}
+                      style={inputStyle}
+                      disabled={oauthLoading}
+                    />
+                    <Btn onClick={confirmOauthCode} disabled={!oauthCode.trim() || oauthLoading}>
+                      {oauthLoading ? "Confirming…" : "Confirm"}
+                    </Btn>
+                    <Btn variant="danger" onClick={() => {
+                      setOauthOpen(false); setOauthCode(""); setOauthErr(null);
+                    }}>Cancel</Btn>
+                  </div>
+                </div>
+              )}
+
+              {oauthErr && <p className="text-xs text-red-400">{oauthErr}</p>}
+            </div>
 
             {/* Quota Indicator */}
             {quotaInfo && (

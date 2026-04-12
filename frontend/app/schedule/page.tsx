@@ -32,6 +32,15 @@ const STATUS_COLOR: Record<string, string> = {
   error_download_failed: "#ef4444",
 };
 
+function parseApiDate(value: string | null): Date | null {
+  if (!value) return null;
+  const normalized = value.includes(" ") && !value.includes("T")
+    ? value.replace(" ", "T") + "Z"
+    : value;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function startOfWeek(date: Date): Date {
   const d = new Date(date);
   const day = d.getDay(); // 0=Sun
@@ -75,8 +84,9 @@ export default function SchedulePage() {
   function getItemsForDay(day: Date): HistoryItem[] {
     return items.filter(item => {
       const dateStr = item.scheduled_at || item.created_at;
-      if (!dateStr) return false;
-      return sameDay(new Date(dateStr), day);
+      const parsed = parseApiDate(dateStr);
+      if (!parsed) return false;
+      return sameDay(parsed, day);
     });
   }
 
@@ -141,7 +151,8 @@ export default function SchedulePage() {
                   dayItems.map(item => {
                     const isImmediate = !item.scheduled_at;
                     const dateStr = item.scheduled_at || item.created_at;
-                    const timeStr = dateStr ? new Date(dateStr).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : "";
+                    const parsedDate = parseApiDate(dateStr);
+                    const timeStr = parsedDate ? parsedDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : "";
                     const color = STATUS_COLOR[item.status] ?? "#6b7280";
                     return (
                       <button key={item.id} onClick={() => setModal(item)}

@@ -126,7 +126,7 @@ def edit_video(body: EditBody):
     af = _build_af(body, trim)
 
     if has_music:
-        _run_with_music(body, src, out_path, vf, trim)
+        _run_with_music(body, src, out_path, vf, af, trim)
     else:
         cmd: list[str] = []
         if trim:
@@ -187,9 +187,6 @@ def _build_vf(body: EditBody, trim: TrimSpec | None) -> list[str]:
     if body.auto_resize:
         vf.append("scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2")
 
-    if body.remove_silence:
-        vf.append("silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-50dB")
-
     for ov in body.text_overlays:
         fc = hex_to_ffmpeg_color(ov.color)
         xy = overlay_xy(ov.position)
@@ -223,10 +220,13 @@ def _build_af(body: EditBody, trim: TrimSpec | None) -> list[str]:
         if st > 0:
             af.append(f"afade=t=out:st={st:.2f}:d={body.fade_out_sec:.2f}")
 
+    if body.remove_silence:
+        af.append("silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-50dB")
+
     return af
 
 
-def _run_with_music(body: EditBody, src: Path, out_path: Path, vf: list[str], trim: TrimSpec | None) -> None:
+def _run_with_music(body: EditBody, src: Path, out_path: Path, vf: list[str], af: list[str], trim: TrimSpec | None) -> None:
     music_matches = [
         p for p in TMP_DIR.glob(f"{body.music_audio_id}.*")
         if p.suffix.lower() not in (".jpg", ".jpeg", ".png")
@@ -249,9 +249,13 @@ def _run_with_music(body: EditBody, src: Path, out_path: Path, vf: list[str], tr
             "-map", "0:v", "-map", "[bg]",
         ])
     else:
+        orig_chain = "[0:a]"
+        if af:
+            orig_chain += f",{','.join(af)}"
+        orig_chain += ",volume=0.7[orig]"
         cmd.extend([
             "-filter_complex",
-            "[0:a]volume=0.7[orig];[1:a]aloop=loop=-1:size=2e9,volume=0.35[bg];[orig][bg]amix=inputs=2[aout]",
+            f"{orig_chain};[1:a]aloop=loop=-1:size=2e9,volume=0.35[bg];[orig][bg]amix=inputs=2[aout]",
             "-map", "0:v", "-map", "[aout]",
         ])
 

@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 
@@ -19,6 +20,8 @@ CLIENT_SECRETS_PATH = BACKEND_DIR / "client_secrets.json"
 QUOTA_PATH = BACKEND_DIR / "quota.json"
 
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+OAUTH_PENDING_TTL_SEC = 15 * 60
+_pending_oauth_flows: dict[str, dict[str, str | float]] = {}
 
 # ---------------------------------------------------------------------------
 # Platform detection
@@ -165,30 +168,90 @@ def authenticate_youtube_account(account: str):
     token_path.write_text(creds.to_json(), encoding="utf-8")
 
 
-def get_oauth_auth_url(account: str) -> str:
+def _cleanup_pending_oauth_flows() -> None:
+    now = time.time()
+    expired = [
+        state
+        for state, pending in _pending_oauth_flows.items()
+        if now - float(pending.get("created_at", 0)) > OAUTH_PENDING_TTL_SEC
+    ]
+    for state in expired:
+        _pending_oauth_flows.pop(state, None)
+
+
+def _extract_oauth_code_and_state(value: str) -> tuple[str, str | None]:
+    raw = value.strip()
+    if "://" not in raw and "code=" not in raw and "state=" not in raw:
+        return raw, None
+
+    parsed = urlparse(raw)
+    query = parse_qs(parsed.query)
+    code = (query.get("code") or [""])[0].strip()
+    state = (query.get("state") or [None])[0]
+    return code or raw, state
+
+
+def get_oauth_auth_url(account: str, redirect_uri: str) -> str:
     from google_auth_oauthlib.flow import InstalledAppFlow
     if not CLIENT_SECRETS_PATH.is_file():
         raise HTTPException(
             status_code=503,
             detail="YouTube OAuth not configured. Add client_secrets.json (see README).",
         )
+
+    _cleanup_pending_oauth_flows()
     flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS_PATH), YOUTUBE_SCOPES)
-    flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-    auth_url, _ = flow.authorization_url(prompt="consent")
+    flow.redirect_uri = redirect_uri
+    auth_url, state = flow.authorization_url(prompt="consent", include_granted_scopes="true")
+    _pending_oauth_flows[state] = {
+        "account": account,
+        "redirect_uri": redirect_uri,
+        "code_verifier": flow.code_verifier or "",
+        "created_at": time.time(),
+    }
     return auth_url
 
 
-def exchange_oauth_code(account: str, code: str) -> None:
+def exchange_oauth_code(account: str, code: str) -> str:
     from google_auth_oauthlib.flow import InstalledAppFlow
-    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS_PATH), YOUTUBE_SCOPES)
-    flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+
+    _cleanup_pending_oauth_flows()
+    code_value, state = _extract_oauth_code_and_state(code)
+
+    pending_state = state
+    pending = _pending_oauth_flows.get(pending_state) if pending_state else None
+    if pending is None and account.strip():
+        matches = [
+            (pending_key, pending_value)
+            for pending_key, pending_value in _pending_oauth_flows.items()
+            if pending_value.get("account") == account.strip()
+        ]
+        if matches:
+            pending_state, pending = max(matches, key=lambda item: float(item[1].get("created_at", 0)))
+
+    if pending is None or pending_state is None:
+        raise HTTPException(status_code=400, detail="OAuth session expired. Start sign-in again.")
+
+    resolved_account = account.strip() or str(pending["account"])
+    if resolved_account != pending["account"]:
+        raise HTTPException(status_code=400, detail="OAuth session does not match the selected account.")
+
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(CLIENT_SECRETS_PATH),
+        YOUTUBE_SCOPES,
+        state=pending_state,
+        code_verifier=str(pending["code_verifier"]),
+    )
+    flow.redirect_uri = str(pending["redirect_uri"])
     try:
-        flow.fetch_token(code=code)
+        flow.fetch_token(code=code_value)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid code or auth failed: {exc}") from exc
     creds = flow.credentials
-    token_path = get_token_path(account)
+    token_path = get_token_path(resolved_account)
     token_path.write_text(creds.to_json(), encoding="utf-8")
+    _pending_oauth_flows.pop(pending_state, None)
+    return resolved_account
 
 
 def get_youtube_service(account: str = "default"):
