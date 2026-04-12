@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from db import init_db
 from scheduler import start_scheduler, stop_scheduler
-from routers import ai, download, edit, history, upload
+from routers import ai, analytics, batch, download, edit, history, upload
 
 
 @asynccontextmanager
@@ -33,6 +33,8 @@ app.include_router(edit.router)
 app.include_router(upload.router)
 app.include_router(history.router)
 app.include_router(ai.router)
+app.include_router(batch.router)
+app.include_router(analytics.router)
 
 
 @app.exception_handler(HTTPException)

@@ -44,6 +44,7 @@ export default function NavBar() {
       <div className="flex items-center gap-1">
         <Link href="/" className={linkCls("/")}>Studio</Link>
         <Link href="/history" className={linkCls("/history")}>History</Link>
+        <Link href="/schedule" className={linkCls("/schedule")}>Schedule</Link>
       </div>
 
       <button

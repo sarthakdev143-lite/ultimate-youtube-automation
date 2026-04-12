@@ -12,6 +12,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
+        {/* Blocking theme script — must run before React hydration to prevent flash */}
+        <script dangerouslySetInnerHTML={{ __html: `(function(){var t=localStorage.getItem('theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();` }} />
         {/* puter.js — free frontier AI models, no API key needed */}
         <Script src="https://js.puter.com/v2/" strategy="beforeInteractive" />
       </head>

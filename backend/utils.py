@@ -1,7 +1,8 @@
-"""Shared helpers used across all routers."""
+import json
 import re
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -15,6 +16,7 @@ BACKEND_DIR = Path(__file__).resolve().parent
 TMP_DIR = BACKEND_DIR / "tmp"
 COOKIES_PATH = BACKEND_DIR / "cookies.txt"
 CLIENT_SECRETS_PATH = BACKEND_DIR / "client_secrets.json"
+QUOTA_PATH = BACKEND_DIR / "quota.json"
 
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -163,6 +165,32 @@ def authenticate_youtube_account(account: str):
     token_path.write_text(creds.to_json(), encoding="utf-8")
 
 
+def get_oauth_auth_url(account: str) -> str:
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    if not CLIENT_SECRETS_PATH.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="YouTube OAuth not configured. Add client_secrets.json (see README).",
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS_PATH), YOUTUBE_SCOPES)
+    flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+    auth_url, _ = flow.authorization_url(prompt="consent")
+    return auth_url
+
+
+def exchange_oauth_code(account: str, code: str) -> None:
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS_PATH), YOUTUBE_SCOPES)
+    flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+    try:
+        flow.fetch_token(code=code)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid code or auth failed: {exc}") from exc
+    creds = flow.credentials
+    token_path = get_token_path(account)
+    token_path.write_text(creds.to_json(), encoding="utf-8")
+
+
 def get_youtube_service(account: str = "default"):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -186,10 +214,55 @@ def get_youtube_service(account: str = "default"):
             except Exception as exc:
                 raise HTTPException(status_code=503, detail=f"Could not refresh YouTube token: {exc}") from exc
         else:
-            try:
-                flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS_PATH), YOUTUBE_SCOPES)
-                creds = flow.run_local_server(port=0)
-            except Exception as exc:
-                raise HTTPException(status_code=503, detail=f"OAuth setup failed: {exc}") from exc
+            raise HTTPException(status_code=401, detail="YouTube OAuth token missing or expired. Please re-authenticate.")
         token_path.write_text(creds.to_json(), encoding="utf-8")
     return build("youtube", "v3", credentials=creds)
+
+
+# ---------------------------------------------------------------------------
+# Quota Tracking
+# ---------------------------------------------------------------------------
+
+def _load_quota() -> dict:
+    if not QUOTA_PATH.is_file():
+        return {}
+    try:
+        return json.loads(QUOTA_PATH.read_text("utf-8"))
+    except:
+        return {}
+
+
+def _save_quota(data: dict) -> None:
+    QUOTA_PATH.write_text(json.dumps(data), "utf-8")
+
+
+def get_quota_used(account: str) -> int:
+    """Return units used today for this account."""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    data = _load_quota()
+    acc_data = data.get(account, {})
+    if acc_data.get("date") != today:
+        return 0
+    return acc_data.get("used", 0)
+
+
+def increment_quota(account: str, units: int) -> None:
+    """Add units to today's count. Reset if date changed."""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    data = _load_quota()
+    acc_data = data.get(account, {})
+    if acc_data.get("date") != today:
+        acc_data = {"date": today, "used": 0}
+    acc_data["used"] += units
+    data[account] = acc_data
+    _save_quota(data)
+
+
+def check_quota(account: str, units_needed: int = 1600) -> None:
+    """Raise HTTPException 429 if quota would be exceeded."""
+    used = get_quota_used(account)
+    if used + units_needed > 10000:
+        raise HTTPException(
+            status_code=429,
+            detail=f"YouTube API quota exceeded for today. Used {used}/10000. Try again tomorrow."
+        )

@@ -169,12 +169,36 @@ export default function StudioPage() {
   // Upload
   const [youtubeAccounts, setYoutubeAccounts] = useState<string[]>(["default"]);
   const [selectedYtAccount, setSelectedYtAccount] = useState("default");
-  const [addingAccount, setAddingAccount] = useState(false);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [tagsRaw, setTagsRaw] = useState("");
   const [privacy, setPrivacy] = useState<Privacy>("public");
   const [scheduledAt, setScheduledAt] = useState("");
+  // New features state
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [thumbnailAtSec, setThumbnailAtSec] = useState(1.0);
+  const [useThumbnail, setUseThumbnail] = useState(false);
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
+  const [quotaInfo, setQuotaInfo] = useState<{ used: number; remaining: number; uploads_remaining: number } | null>(null);
+  // Headless OAuth state
+  const [oauthAccountName, setOauthAccountName] = useState("");
+  const [oauthUrl, setOauthUrl] = useState("");
+  const [oauthCode, setOauthCode] = useState("");
+  const [oauthStep, setOauthStep] = useState<"idle" | "url" | "code">("idle");
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [oauthErr, setOauthErr] = useState<string | null>(null);
+  // Pipeline presets
+  const [pipelinePresets, setPipelinePresets] = useState<{ id: number; name: string; settings: Record<string, unknown> }[]>([]);
+  const [pipelinePresetsOpen, setPipelinePresetsOpen] = useState(false);
+  const [pipelinePresetName, setPipelinePresetName] = useState("");
+  // Auto-pipeline batch
+  const [batchMode, setBatchMode] = useState<"manual" | "auto">("manual");
+  const [batchPrivacy, setBatchPrivacy] = useState<Privacy>("private");
+  const [batchAccount, setBatchAccount] = useState("default");
+  const [batchStagger, setBatchStagger] = useState(0);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<{ url: string; video_id: string; status: string; youtube_url?: string }[]>([]);
+  const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetchYtAccounts();
@@ -191,23 +215,41 @@ export default function StudioPage() {
   };
 
   const onAddYtAccount = async () => {
+    setOauthErr(null);
     const name = window.prompt("Enter a unique name for this YouTube account (e.g. gaming_channel):");
     if (!name || !name.trim()) return;
-    setAddingAccount(true);
+    setOauthAccountName(name.trim());
+    setOauthLoading(true);
+    setOauthStep("url");
     try {
-      const res = await fetch(`${API}/youtube/accounts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ account: name.trim() })
+      const res = await fetch(`${API}/youtube/accounts/auth-url?account=${encodeURIComponent(name.trim())}`);
+      if (!res.ok) throw new Error(await apiError(res));
+      const data = await res.json();
+      setOauthUrl(data.auth_url);
+      window.open(data.auth_url, "_blank");
+    } catch (e) {
+      setOauthErr(e instanceof Error ? e.message : "Failed to get auth URL");
+      setOauthStep("idle");
+    } finally {
+      setOauthLoading(false);
+    }
+  };
+
+  const confirmOauthCode = async () => {
+    if (!oauthCode.trim()) return;
+    setOauthLoading(true); setOauthErr(null);
+    try {
+      const res = await fetch(`${API}/youtube/accounts/exchange`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: oauthAccountName, code: oauthCode.trim() })
       });
       if (!res.ok) throw new Error(await apiError(res));
       await fetchYtAccounts();
-      setSelectedYtAccount(name.trim());
+      setSelectedYtAccount(oauthAccountName);
+      setOauthStep("idle"); setOauthCode(""); setOauthAccountName(""); setOauthUrl("");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to add account");
-    } finally {
-      setAddingAccount(false);
-    }
+      setOauthErr(e instanceof Error ? e.message : "Invalid code");
+    } finally { setOauthLoading(false); }
   };
 
   // Status
@@ -232,6 +274,23 @@ export default function StudioPage() {
     setSpeed(1); setMute(false); setFadeIn(0); setFadeOut(0); setWatermark("");
     setRotate(0); setFlipH(false); setFlipV(false); setCrop916(false);
     setAutoResize(false); setRemoveSilence(false); setMusicId(""); setMusicName("");
+  };
+
+  const fetchQuota = async (account: string) => {
+    try {
+      const res = await fetch(`${API}/quota/${encodeURIComponent(account)}`);
+      if (res.ok) setQuotaInfo(await res.json());
+    } catch { /**/ }
+  };
+
+  useEffect(() => { fetchQuota(selectedYtAccount); }, [selectedYtAccount]);
+
+  const fetchThumbnailPreview = async (vid: string, sec: number) => {
+    if (!vid) return;
+    try {
+      // We just show the API URL; the browser will load the image
+      setThumbnailPreview(`${API}/video/${encodeURIComponent(vid)}/thumbnail?t=${sec}&_=${Date.now()}`);
+    } catch { /**/ }
   };
 
   const currentSettings = useCallback(() => ({
@@ -439,7 +498,41 @@ Respond with ONLY valid JSON, no markdown.`;
     loadServerPresets();
   };
 
-  // ── upload ───────────────────────────────────────────────────────────────
+  const loadPipelinePresets = async () => {
+    try {
+      const res = await fetch(`${API}/presets/pipeline`);
+      const data = await res.json();
+      setPipelinePresets(data.items ?? []);
+    } catch { /**/ }
+  };
+
+  const savePipelinePreset = async () => {
+    if (!pipelinePresetName.trim()) return;
+    const settings = {
+      edit: currentSettings(),
+      upload: { privacy, title_template: title, description_template: desc, tags: tagsRaw.split(",").map(t => t.trim()).filter(Boolean), youtube_account: selectedYtAccount, schedule_offset_minutes: 0, webhook_url: webhookUrl },
+    };
+    await fetch(`${API}/presets/pipeline`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: pipelinePresetName.trim(), settings }) });
+    setPipelinePresetName(""); loadPipelinePresets();
+  };
+
+  const applyPipelinePreset = (p: Record<string, unknown>) => {
+    if (p.edit) applySettings(p.edit as Record<string, unknown>);
+    const u = p.upload as Record<string, unknown> | undefined;
+    if (u) {
+      if (u.privacy) setPrivacy(u.privacy as Privacy);
+      if (u.title_template) setTitle(u.title_template as string);
+      if (u.description_template) setDesc(u.description_template as string);
+      if (Array.isArray(u.tags)) setTagsRaw((u.tags as string[]).join(", "));
+      if (u.youtube_account) setSelectedYtAccount(u.youtube_account as string);
+      if (u.webhook_url) setWebhookUrl(u.webhook_url as string);
+    }
+  };
+
+  const deletePipelinePreset = async (id: number) => {
+    await fetch(`${API}/presets/pipeline/${id}`, { method: "DELETE" });
+    loadPipelinePresets();
+  };
 
   const onUpload = async () => {
     if (!activeId) return;
@@ -455,6 +548,9 @@ Respond with ONLY valid JSON, no markdown.`;
           privacy, source_url: srcUrl, platform: platform ?? "",
           scheduled_at: scheduledAt || null,
           youtube_account: selectedYtAccount,
+          thumbnail_video_id: useThumbnail ? (videoId || "") : "",
+          thumbnail_at_sec: thumbnailAtSec,
+          webhook_url: webhookUrl,
         }),
       });
       if (!res.ok) throw new Error(await apiError(res));
@@ -463,6 +559,7 @@ Respond with ONLY valid JSON, no markdown.`;
         setYtUrl(`[Scheduled] ID: ${data.history_id} at ${data.scheduled_at}`);
       } else {
         setYtUrl(data.youtube_url); setUpProg(100);
+        fetchQuota(selectedYtAccount);
       }
     } catch (e) { setUpErr(e instanceof Error ? e.message : "Upload failed"); setUpProg(0); }
     finally { clearInterval(tick); setUpLoading(false); }
@@ -470,23 +567,125 @@ Respond with ONLY valid JSON, no markdown.`;
 
   // ── render ───────────────────────────────────────────────────────────────
 
+  // ── auto pipeline batch ────────────────────────────────────────────────
+
+  const runAutoPipeline = async () => {
+    const urls = batchInput.split("\n").map(u => u.trim()).filter(Boolean);
+    if (!urls.length) return;
+    setBatchRunning(true); setBatchStatus([]);
+    try {
+      const res = await fetch(`${API}/batch/run`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls, privacy: batchPrivacy, youtube_account: batchAccount, schedule_offset_minutes: batchStagger }),
+      });
+      if (!res.ok) throw new Error(await apiError(res));
+      const data = await res.json();
+      setBatchId(data.batch_id);
+      setBatchStatus(data.items);
+      setBatchInput("");
+      // Poll for status
+      if (batchPollRef.current) clearInterval(batchPollRef.current);
+      batchPollRef.current = setInterval(async () => {
+        try {
+          const sr = await fetch(`${API}/batch/${data.batch_id}/status`);
+          const sd = await sr.json();
+          setBatchStatus(sd.items);
+          const allDone = sd.items.every((i: { status: string }) => i.status === "uploaded" || i.status.startsWith("error"));
+          if (allDone && batchPollRef.current) { clearInterval(batchPollRef.current); setBatchRunning(false); }
+        } catch { /**/ }
+      }, 5000);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Pipeline failed");
+      setBatchRunning(false);
+    }
+  };
+
+  // ── upload ───────────────────────────────────────────────────────────────
+
   return (
     <div className="flex flex-col gap-6 pt-8">
 
+      {/* ── PIPELINE PRESETS ─────────────────────────────────────── */}
+      <Card title="Pipeline Presets" subtitle="Save and load full download→edit→upload configurations.">
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={() => { setPipelinePresetsOpen(o => !o); if (!pipelinePresetsOpen) loadPipelinePresets(); }}>
+            {pipelinePresetsOpen ? "▲ Hide" : "▼ Manage Pipeline Presets"}
+          </Btn>
+        </div>
+        {pipelinePresetsOpen && (
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <input value={pipelinePresetName} onChange={e => setPipelinePresetName(e.target.value)} placeholder="Preset name…"
+                className={`${inputCls} flex-1`} style={inputStyle} />
+              <Btn onClick={savePipelinePreset} disabled={!pipelinePresetName.trim()}>Save Current</Btn>
+            </div>
+            {pipelinePresets.length === 0 && <p className="text-xs" style={{ color: "var(--text-muted)" }}>No pipeline presets saved.</p>}
+            <div className="flex flex-wrap gap-2">
+              {pipelinePresets.map(p => (
+                <div key={p.id} className="flex items-center gap-1 rounded-lg border px-2 py-1" style={{ borderColor: "var(--border)" }}>
+                  <button type="button" className="text-xs text-emerald-400 hover:text-emerald-300" onClick={() => applyPipelinePreset(p.settings)}>⚡ {p.name}</button>
+                  <button type="button" className="text-xs text-red-400 ml-1" onClick={() => deletePipelinePreset(p.id)}>×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+
       {/* ── BATCH QUEUE ─────────────────────────────────────────── */}
-      <Card title="Batch Queue" subtitle="Paste multiple URLs (one per line) to download them sequentially.">
+      <Card title="Batch Queue" subtitle="Paste multiple URLs (one per line) to download or auto-upload them.">
+        {/* Mode toggle */}
+        <div className="flex gap-2">
+          {["manual", "auto"].map(m => (
+            <button key={m} type="button" onClick={() => setBatchMode(m as "manual" | "auto")}
+              className={`flex-1 rounded-lg border py-1.5 text-xs font-semibold transition ${batchMode === m ? "border-emerald-500 bg-emerald-600/20 text-emerald-400" : "text-neutral-400"}`}
+              style={batchMode !== m ? { borderColor: "var(--border)" } : undefined}>
+              {m === "manual" ? "📋 Manual" : "⚡ Auto Pipeline"}
+            </button>
+          ))}
+        </div>
         <textarea value={batchInput} onChange={e => setBatchInput(e.target.value)}
           rows={3} placeholder={"https://www.tiktok.com/...\nhttps://www.instagram.com/reel/...\nhttps://x.com/user/status/..."}
           className="rounded-lg border px-3 py-2 text-sm resize-none w-full outline-none focus:border-emerald-500"
           style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
-        <div className="flex flex-wrap gap-2">
-          <Btn onClick={addToQueue} disabled={!batchInput.trim()}>Add to Queue</Btn>
-          <Btn variant="ghost" onClick={processQueue} disabled={batching || !queue.some(q => q.status === "pending")}>
-            {batching ? "Processing…" : "Process Queue"}
-          </Btn>
-          {queue.length > 0 && <Btn variant="danger" onClick={() => setQueue([])}>Clear</Btn>}
-        </div>
-        {queue.length > 0 && (
+
+        {batchMode === "manual" ? (
+          <div className="flex flex-wrap gap-2">
+            <Btn onClick={addToQueue} disabled={!batchInput.trim()}>Add to Queue</Btn>
+            <Btn variant="ghost" onClick={processQueue} disabled={batching || !queue.some(q => q.status === "pending")}>
+              {batching ? "Processing…" : "Process Queue"}
+            </Btn>
+            {queue.length > 0 && <Btn variant="danger" onClick={() => setQueue([])}>Clear</Btn>}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Privacy">
+                <select value={batchPrivacy} onChange={e => setBatchPrivacy(e.target.value as Privacy)}
+                  className="rounded-lg border px-2 py-2 text-sm w-full"
+                  style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                  <option value="public">Public</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                </select>
+              </Field>
+              <Field label="YouTube Account">
+                <select value={batchAccount} onChange={e => setBatchAccount(e.target.value)}
+                  className="rounded-lg border px-2 py-2 text-sm w-full"
+                  style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                  {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Inp label="Stagger uploads by (minutes, 0 = immediate)" type="number" min={0} max={1440} value={batchStagger} onChange={e => setBatchStagger(+e.target.value)} />
+            <Btn onClick={runAutoPipeline} disabled={batchRunning || !batchInput.trim()}>
+              {batchRunning ? "Pipeline Running…" : "▶ Run Pipeline"}
+            </Btn>
+          </div>
+        )}
+
+        {/* Manual queue status */}
+        {batchMode === "manual" && queue.length > 0 && (
           <ul className="space-y-1">
             {queue.map(q => (
               <li key={q.id} className="flex items-start gap-2 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface2)" }}>
@@ -496,6 +695,20 @@ Respond with ONLY valid JSON, no markdown.`;
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Auto pipeline status */}
+        {batchMode === "auto" && batchStatus.length > 0 && (
+          <div className="space-y-1">
+            {batchStatus.map(i => (
+              <div key={i.video_id} className="flex items-center gap-2 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface2)" }}>
+                <span>{i.status === "batch_queued" ? "⏳" : i.status === "uploaded" ? "✅" : i.status.startsWith("error") ? "❌" : "⚙️"}</span>
+                <span className="truncate flex-1" style={{ color: "var(--text)" }}>{i.url.slice(0, 60)}</span>
+                <span className={`shrink-0 font-medium ${i.status === "uploaded" ? "text-emerald-400" : i.status.startsWith("error") ? "text-red-400" : "text-amber-400"}`}>{i.status}</span>
+                {i.youtube_url && <a href={i.youtube_url} target="_blank" rel="noreferrer" className="text-emerald-400 underline shrink-0">Watch ↗</a>}
+              </div>
+            ))}
+          </div>
         )}
       </Card>
 
@@ -689,6 +902,7 @@ Respond with ONLY valid JSON, no markdown.`;
         </div>
         <ErrMsg msg={aiErr} />
 
+        {/* YouTube Account */}
         <div className="flex gap-4">
           <Field label="YouTube Account">
             <div className="flex items-center gap-2">
@@ -697,12 +911,39 @@ Respond with ONLY valid JSON, no markdown.`;
                 style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
                 {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
-              <Btn variant="ghost" onClick={onAddYtAccount} disabled={addingAccount}>
-                 {addingAccount ? "Waiting for browser..." : "+ Add Account"}
+              <Btn variant="ghost" onClick={onAddYtAccount} disabled={oauthLoading}>
+                {oauthLoading ? "Opening…" : "+ Add Account"}
               </Btn>
             </div>
           </Field>
         </div>
+
+        {/* Headless OAuth flow */}
+        {oauthStep === "url" && (
+          <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)", background: "var(--surface2)" }}>
+            <p className="text-sm font-medium" style={{ color: "var(--text)" }}>🔑 Authorize <strong>{oauthAccountName}</strong></p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>A Google sign-in page has opened. Sign in, then copy the code shown and paste it below.</p>
+            {oauthUrl && <a href={oauthUrl} target="_blank" rel="noreferrer" className="text-xs text-emerald-400 underline">Re-open auth page ↗</a>}
+            <div className="flex gap-2">
+              <input value={oauthCode} onChange={e => setOauthCode(e.target.value)} placeholder="Paste Google code here…"
+                className={`${inputCls} flex-1`} style={inputStyle} />
+              <Btn onClick={() => { setOauthStep("code"); confirmOauthCode(); }} disabled={!oauthCode.trim() || oauthLoading}>Confirm</Btn>
+              <Btn variant="danger" onClick={() => { setOauthStep("idle"); setOauthCode(""); }}>Cancel</Btn>
+            </div>
+            {oauthErr && <p className="text-xs text-red-400">{oauthErr}</p>}
+          </div>
+        )}
+
+        {/* Quota Indicator */}
+        {quotaInfo && (
+          <div className="rounded-lg border px-3 py-2 text-xs" style={{
+            borderColor: "var(--border)",
+            background: quotaInfo.used > 9000 ? "rgba(239,68,68,0.1)" : quotaInfo.used > 7000 ? "rgba(245,158,11,0.1)" : "rgba(16,185,129,0.1)",
+            color: quotaInfo.used > 9000 ? "#ef4444" : quotaInfo.used > 7000 ? "#f59e0b" : "#10b981",
+          }}>
+            Quota: {quotaInfo.used.toLocaleString()}/10,000 units today — ~{quotaInfo.uploads_remaining} uploads left
+          </div>
+        )}
 
         <Inp label="Title" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Your video title" />
         <Field label="Description">
@@ -721,6 +962,31 @@ Respond with ONLY valid JSON, no markdown.`;
           </select>
         </Field>
         <Inp label="Schedule for later (optional — leave empty for immediate upload)" type="datetime-local" value={scheduledAt} onChange={e => setScheduledAt(e.target.value)} />
+
+        {/* Custom Thumbnail */}
+        <Divider />
+        <SectionHead>Custom Thumbnail</SectionHead>
+        <Toggle label="Use custom thumbnail" checked={useThumbnail} onChange={setUseThumbnail} />
+        {useThumbnail && (
+          <div className="space-y-3">
+            <Inp label="Extract from video at second" type="number" min={0} max={duration || 300} step={0.5} value={thumbnailAtSec}
+              onChange={e => { setThumbnailAtSec(+e.target.value); fetchThumbnailPreview(videoId || "", +e.target.value); }} />
+            <Btn variant="ghost" onClick={() => fetchThumbnailPreview(videoId || "", thumbnailAtSec)}>Preview Frame</Btn>
+            {thumbnailPreview && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={thumbnailPreview} alt="Thumbnail preview" className="rounded-lg border h-28 object-cover" style={{ borderColor: "var(--border)" }}
+                onError={() => setThumbnailPreview(null)} />
+            )}
+          </div>
+        )}
+
+        {/* Webhook */}
+        <Divider />
+        <SectionHead>Webhook (optional)</SectionHead>
+        <Inp label="Webhook URL" type="url" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} placeholder="https://your-site.com/webhook or Discord webhook URL" />
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>POSTed with video details on upload completion.</p>
+
+        <Divider />
 
         <Btn onClick={onUpload} disabled={!activeId || upLoading}>{upLoading ? "Uploading…" : scheduledAt ? "Schedule Upload" : "Upload to YouTube"}</Btn>
 

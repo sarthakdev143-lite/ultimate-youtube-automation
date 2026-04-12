@@ -52,6 +52,9 @@ def download_video(body: DownloadBody):
     }
     if needs_cookies(platform):
         ydl_opts["cookiefile"] = str(COOKIES_PATH)
+    if platform == "tiktok":
+        ydl_opts["format"] = "bestvideo[vcodec^=h264]+bestaudio/best"
+        ydl_opts["extractor_args"] = {"tiktok": {"webpage_download": ["True"]}}
 
     info = None
     try:
@@ -88,6 +91,19 @@ def download_video(body: DownloadBody):
     thumb_path = TMP_DIR / f"{video_id}_thumb.jpg"
     run_ffmpeg(["-ss", "1", "-i", str(video_path), "-frames:v", "1", str(thumb_path)])
 
+    # TikTok: crop bottom 80px to remove watermark
+    watermark_removed = False
+    if platform == "tiktok":
+        try:
+            stripped = TMP_DIR / f"{video_id}_clean.mp4"
+            run_ffmpeg(["-i", str(video_path), "-vf", "crop=iw:ih-80:0:0", "-c:a", "copy", str(stripped)])
+            if stripped.is_file():
+                video_path.unlink(missing_ok=True)
+                stripped.rename(video_path)
+                watermark_removed = True
+        except:
+            pass
+
     thumb_b64 = ""
     if thumb_path.is_file():
         thumb_b64 = base64.b64encode(thumb_path.read_bytes()).decode("ascii")
@@ -105,4 +121,5 @@ def download_video(body: DownloadBody):
         "tags": info.get("tags") or [],
         "view_count": info.get("view_count"),
         "like_count": info.get("like_count"),
+        "watermark_removed": watermark_removed,
     }

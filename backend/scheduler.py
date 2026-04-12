@@ -64,6 +64,22 @@ def _process_scheduled_uploads() -> None:
             yt_url = f"https://www.youtube.com/watch?v={vid}" if vid else None
             update_history_status(history_id, "uploaded", yt_url)
             logger.info("Scheduled upload done: history=%s yt=%s", history_id, yt_url)
+            # Fire webhook
+            webhook_url = row.get("webhook_url", "")
+            if webhook_url and yt_url:
+                try:
+                    import httpx
+                    from datetime import datetime as dt
+                    httpx.post(webhook_url, json={
+                        "event": "upload_complete",
+                        "youtube_url": yt_url,
+                        "title": title,
+                        "platform": row.get("platform", ""),
+                        "video_id": video_id,
+                        "timestamp": dt.utcnow().isoformat() + "Z"
+                    }, timeout=5.0)
+                except Exception as wh_exc:
+                    logger.warning("Webhook failed for history=%s: %s", history_id, wh_exc)
         except Exception as exc:
             update_history_status(history_id, "error_upload_failed")
             logger.error("Scheduled upload failed history=%s: %s", history_id, exc)

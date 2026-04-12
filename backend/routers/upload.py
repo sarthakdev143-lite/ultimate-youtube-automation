@@ -10,7 +10,10 @@ from googleapiclient.http import MediaFileUpload
 from pydantic import BaseModel, Field
 
 from db import get_history_by_id, insert_history, update_history_status
-from utils import BACKEND_DIR, TMP_DIR, authenticate_youtube_account, cleanup_old_tmp_files, find_video_path, get_youtube_service
+from utils import (
+    BACKEND_DIR, TMP_DIR, authenticate_youtube_account, cleanup_old_tmp_files, find_video_path, get_youtube_service,
+    check_quota, increment_quota, get_oauth_auth_url, exchange_oauth_code, get_quota_used, run_ffmpeg
+)
 
 router = APIRouter()
 
@@ -25,6 +28,9 @@ class UploadBody(BaseModel):
     platform: str = ""
     scheduled_at: str | None = None  # ISO 8601, e.g. "2024-12-01T18:00:00"
     youtube_account: str = "default"
+    thumbnail_video_id: str = ""
+    thumbnail_at_sec: float = 1.0
+    webhook_url: str = ""
 
 
 @router.post("/upload")
@@ -53,10 +59,12 @@ def upload_to_youtube(body: UploadBody):
             privacy=body.privacy,
             description=body.description,
             tags_json=json.dumps(body.tags),
+            webhook_url=body.webhook_url,
         )
         return {"scheduled": True, "history_id": history_id, "scheduled_at": body.scheduled_at}
 
     # ── Immediate upload ──────────────────────────────────────────────────
+    check_quota(body.youtube_account, 1600)
     youtube = get_youtube_service(body.youtube_account)
     request_body = {
         "snippet": {
@@ -91,6 +99,43 @@ def upload_to_youtube(body: UploadBody):
         raise HTTPException(status_code=500, detail="Upload succeeded but no video ID returned.")
 
     yt_url = f"https://www.youtube.com/watch?v={vid}"
+    
+    # ── Custom Thumbnail ──
+    if body.thumbnail_video_id:
+        thumb_path = TMP_DIR / f"{body.video_id}_custom_tn.jpg"
+        src_vid = find_video_path(body.thumbnail_video_id)
+        try:
+            run_ffmpeg([
+                "-ss", str(body.thumbnail_at_sec), "-i", str(src_vid), "-frames:v", "1",
+                "-vf", "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
+                str(thumb_path),
+            ])
+            if thumb_path.is_file():
+                youtube.thumbnails().set(
+                    videoId=vid,
+                    media_body=MediaFileUpload(str(thumb_path), mimetype="image/jpeg", resumable=True)
+                ).execute()
+        except:
+            pass # ignore thumbnail failures
+            
+    increment_quota(body.youtube_account, 1600)
+    
+    # ── Webhook ──
+    if body.webhook_url:
+        import httpx
+        from datetime import datetime as dt
+        try:
+            httpx.post(body.webhook_url, json={
+                "event": "upload_complete",
+                "youtube_url": yt_url,
+                "title": body.title or "Untitled",
+                "platform": body.platform,
+                "video_id": body.video_id,
+                "timestamp": dt.utcnow().isoformat() + "Z"
+            }, timeout=5.0)
+        except:
+            pass
+
     insert_history(
         video_id=body.video_id,
         source_url=body.source_url,
@@ -99,6 +144,10 @@ def upload_to_youtube(body: UploadBody):
         youtube_url=yt_url,
         status="uploaded",
         youtube_account=body.youtube_account,
+        privacy=body.privacy,
+        description=body.description,
+        tags_json=json.dumps(body.tags),
+        webhook_url=body.webhook_url,
     )
     return {"youtube_url": yt_url}
 
@@ -114,17 +163,32 @@ def get_youtube_accounts():
         accounts.add(name)
     return {"accounts": sorted(list(accounts))}
 
-@router.post("/youtube/accounts")
-def add_youtube_account(body: AccountBody):
-    if not body.account.strip():
+class AccountExchangeBody(BaseModel):
+    account: str
+    code: str
+
+@router.get("/youtube/accounts/auth-url")
+def get_auth_url(account: str):
+    if not account.strip():
         raise HTTPException(status_code=400, detail="Account name is required.")
-    try:
-        authenticate_youtube_account(body.account.strip())
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"auth_url": get_oauth_auth_url(account.strip())}
+
+@router.post("/youtube/accounts/exchange")
+def exchange_code(body: AccountExchangeBody):
+    if not body.account.strip() or not body.code.strip():
+        raise HTTPException(status_code=400, detail="Account and code are required.")
+    exchange_oauth_code(body.account.strip(), body.code.strip())
     return {"success": True, "account": body.account.strip()}
+
+@router.get("/quota/{account}")
+def get_quota(account: str):
+    used = get_quota_used(account)
+    return {
+        "account": account,
+        "used": used,
+        "remaining": max(0, 10000 - used),
+        "uploads_remaining": max(0, (10000 - used) // 1600)
+    }
 
 
 @router.get("/upload/status/{history_id}")

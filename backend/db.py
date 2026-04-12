@@ -64,6 +64,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE history ADD COLUMN tags_json TEXT DEFAULT '[]'")
         except sqlite3.OperationalError:
             pass
+        try:
+            conn.execute("ALTER TABLE history ADD COLUMN webhook_url TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS presets (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,13 +94,14 @@ def insert_history(
     privacy: str = "private",
     description: str = "",
     tags_json: str = "[]",
+    webhook_url: str = "",
 ) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO history
-               (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account, privacy, description, tags_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account, privacy, description, tags_json),
+               (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account, privacy, description, tags_json, webhook_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account, privacy, description, tags_json, webhook_url),
         )
         return cur.lastrowid  # type: ignore[return-value]
 

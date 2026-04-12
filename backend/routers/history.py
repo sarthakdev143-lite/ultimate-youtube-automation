@@ -56,3 +56,33 @@ def remove_preset(preset_id: int):
     if not delete_preset(preset_id):
         raise HTTPException(status_code=404, detail="Preset not found.")
     return {"deleted": True}
+
+
+class PipelinePresetBody(BaseModel):
+    name: str
+    settings: dict
+
+
+@router.post("/presets/pipeline")
+def create_pipeline_preset(body: PipelinePresetBody):
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Preset name cannot be empty.")
+    # Store with a _type marker so we can distinguish pipeline presets
+    settings = dict(body.settings)
+    settings["_type"] = "pipeline"
+    save_preset(body.name.strip(), settings)
+    return {"saved": True}
+
+
+@router.get("/presets/pipeline")
+def list_pipeline_presets():
+    all_presets = get_presets()
+    pipeline = [p for p in all_presets if p["settings"].get("_type") == "pipeline"]
+    return {"items": pipeline}
+
+
+@router.delete("/presets/pipeline/{preset_id}")
+def remove_pipeline_preset(preset_id: int):
+    if not delete_preset(preset_id):
+        raise HTTPException(status_code=404, detail="Preset not found.")
+    return {"deleted": True}
