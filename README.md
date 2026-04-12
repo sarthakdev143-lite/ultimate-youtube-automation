@@ -1,15 +1,24 @@
 # YT Automation Factory
 
-Web app: paste an Instagram Reel URL, optionally add a text overlay or trim, then upload to YouTube.
+A fully automated, multi-platform video pipeline. Download short-form content from platforms like Instagram Reels, TikTok, and Snapchat, apply advanced video editing (trim, crop, rotate, color grading, text overlays, background music), generate optimized YouTube metadata using AI, and batch-upload or schedule to multiple YouTube channels.
 
-- **Frontend:** Next.js (App Router), TypeScript, Tailwind CSS — `frontend/`
-- **Backend:** FastAPI — `backend/`
+- **Frontend:** Next.js (App Router), TypeScript, Tailwind CSS, Puter.js (AI Metadata & features) — `frontend/`
+- **Backend:** FastAPI, `yt-dlp`, FFmpeg, APScheduler — `backend/`
+
+## Features
+
+- **Multi-Platform Downloads:** Retrieve videos reliably from Instagram, TikTok, Snapchat, and more using `yt-dlp`.
+- **Advanced Editing Pipeline:** Seamlessly trim, crop, rotate, apply color grading, add dynamic text overlays, and inject background music via FFmpeg.
+- **AI-Powered Metadata:** Leverage free AI models (via Puter.js) to generate highly optimized YouTube titles, descriptions, and tags based on transcriptions or video context.
+- **Multi-Account Uploads:** Manage multiple YouTube accounts seamlessly. Select specific channels for different batches of content.
+- **Scheduling & Batch Processing:** Configure upload pipelines, define presets, and schedule uploads sequentially to avoid API rate limits.
+- **Deployable:** Easily deployable backend and frontend (e.g., to Vercel).
 
 ## Prerequisites
 
 - **Python 3.10+**
 - **Node.js 18+**
-- **ffmpeg** installed and available on your `PATH` (required for thumbnails and edits)
+- **ffmpeg** installed and available on your `PATH` (required for all video editing, thumbnails, and audio processing)
 
 ### Installing ffmpeg
 
@@ -17,24 +26,23 @@ Web app: paste an Instagram Reel URL, optionally add a text overlay or trim, the
 - **macOS:** `brew install ffmpeg`
 - **Linux:** `sudo apt install ffmpeg` (Debian/Ubuntu) or your distro equivalent.
 
-## Instagram cookies (`backend/cookies.txt`)
+## Platform Setup & Credentials
 
-1. Install **EditThisCookie**, **Cookie-Editor**, or a similar extension.
-2. Log into **Instagram** in your browser.
+### 1. Instagram Cookies (`backend/cookies.txt`)
+_Required to download private or restricted reels._
+1. Install an extension like **Cookie-Editor**.
+2. Log into **Instagram**.
 3. Export cookies in **Netscape** format.
-4. Save the file as `backend/cookies.txt` (you can start from `backend/cookies.example.txt` and replace contents).
+4. Save the file as `backend/cookies.txt`.
 
-Without valid cookies, downloads often fail for reels that require a logged-in session.
-
-## YouTube OAuth (`backend/client_secrets.json`)
-
+### 2. YouTube OAuth (`backend/client_secrets.json`)
+_Required to upload to YouTube channels._
 1. Open [Google Cloud Console](https://console.cloud.google.com).
-2. Create a project (or pick an existing one).
-3. Enable **YouTube Data API v3**.
-4. **Credentials** → **Create credentials** → **OAuth client ID** → **Desktop app**.
-5. Download the JSON and save it as `backend/client_secrets.json` (replace the template values).
+2. Enable **YouTube Data API v3**.
+3. **Credentials** → **Create credentials** → **OAuth client ID** → **Desktop app**.
+4. Save the downloaded JSON as `backend/client_secrets.json`.
 
-The first upload triggers a browser sign-in; a refresh token is stored in `backend/token.json` (gitignored). Do not commit real secrets or cookies.
+*Note: The system supports multi-account uploads. On your first upload for a selected profile, it triggers a browser sign-in and stores a specific token for that channel.*
 
 ## Run locally
 
@@ -43,12 +51,11 @@ The first upload triggers a browser sign-in; a refresh token is stored in `backe
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate
+# Activate virtual environment
+.venv\Scripts\activate # On macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
-
-On macOS/Linux use `source .venv/bin/activate` instead of `.venv\Scripts\activate`.
 
 **Frontend** (port **3000**):
 
@@ -58,28 +65,26 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The UI calls the API at `http://localhost:8000`. Override with `NEXT_PUBLIC_API_URL` if needed.
+Open [http://localhost:3000](http://localhost:3000). The UI calls the API at `http://localhost:8000`. You can override this using `NEXT_PUBLIC_API_URL` in your `.env` file.
 
-## CORS
+## Deployment (Vercel)
 
-The API allows `http://localhost:3000` via FastAPI `CORSMiddleware`.
+The frontend is fully compatible with Vercel deployments. Just connect your repository and configure the `NEXT_PUBLIC_API_URL` environment variable to point to your hosted backend.
 
-## API (summary)
+For the backend, you can deploy to Render, Railway, or Heroku (a `render.yaml` template is provided), ensuring that `ffmpeg` is available in your production environment (e.g., using `apt-get` in a custom build script or using Docker).
+
+## API Overview
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/download` | Download reel; returns `video_id`, `duration`, base64 `thumbnail` |
-| `POST` | `/edit` | Trim and/or `drawtext` overlay via ffmpeg |
-| `POST` | `/upload` | Resumable upload to YouTube |
-| `GET` | `/video/{video_id}/thumbnail` | JPEG thumbnail |
+| `POST` | `/download` | Download short form video via `yt-dlp` |
+| `POST` | `/edit` | Process video (trim, crop, color grade, text, bg music) |
+| `POST` | `/upload` | Resumable upload to a selected YouTube channel |
+| `GET`  | `/video/{video_id}/thumbnail` | Retrieve JPEG thumbnail |
+| `POST` | `/schedule` | Queue video batch processing and scheduling |
 
-Temp files live under `backend/tmp/` and are deleted when older than one hour.
+Temp files live under `backend/tmp/` and are actively cleared after processing.
 
-## Error handling
-
-The UI surfaces API error messages for invalid URLs, download failures (cookies, private media), ffmpeg errors, missing OAuth config, quota issues, and upload failures.
-
-## Constraints
-
-- No Docker, no database — UUID filenames under `backend/tmp/` only.
-- Respect Instagram and YouTube terms of service; this tool is for content you own or are allowed to republish.
+## Constraints & Notices
+- Respect platform terms of service; this tool is for automating content you own or have the explicit right to republish.
+- No database required by default — relies on local filesystem structures and token management.
