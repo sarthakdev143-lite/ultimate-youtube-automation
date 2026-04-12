@@ -26,14 +26,36 @@ function makeOverlay(dur: number): Overlay {
 
 // ── Shared UI atoms ──────────────────────────────────────────────────────────
 
-function Card({ title, subtitle, disabled, children }: { title: string; subtitle?: string; disabled?: boolean; children: React.ReactNode }) {
+function Card({ title, subtitle, disabled, collapsed, onHeaderClick, children }: { title: string; subtitle?: string; disabled?: boolean; collapsed?: boolean; onHeaderClick?: () => void; children: React.ReactNode }) {
   return (
-    <section className={`rounded-2xl border p-6 shadow-lg transition-opacity ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+    <section className={`rounded-2xl border shadow-lg transition-all ${disabled ? "opacity-50" : ""}`}
       style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-      <h2 className="text-base font-semibold text-emerald-400">{title}</h2>
-      {subtitle && <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>{subtitle}</p>}
-      <div className="mt-5 space-y-4">{children}</div>
+      <div
+        className={`p-6 ${onHeaderClick ? "cursor-pointer hover:bg-white/5 transition-colors rounded-2xl" : ""}`}
+        onClick={onHeaderClick}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className={`font-semibold transition-colors ${collapsed ? "text-neutral-300" : "text-emerald-400 text-lg"}`}>{title}</h2>
+          {onHeaderClick && <span className="text-neutral-500 text-sm">{collapsed ? "▼ Expand" : "▲ Collapse"}</span>}
+        </div>
+        {subtitle && !collapsed && <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>{subtitle}</p>}
+      </div>
+      {!collapsed && <div className="px-6 pb-6 space-y-4 border-t pt-4" style={{ borderColor: "var(--border)" }}>{children}</div>}
     </section>
+  );
+}
+
+function CollapsibleSection({ title, children }: { title: string, children: React.ReactNode }) {
+  return (
+    <details className="group border rounded-xl overflow-hidden" style={{ borderColor: "var(--border)" }}>
+      <summary className="p-3 cursor-pointer text-sm font-medium hover:bg-white/5 transition-colors flex justify-between items-center" style={{ background: "var(--surface2)" }}>
+        {title}
+        <span className="text-neutral-500 group-open:rotate-180 transition-transform">▼</span>
+      </summary>
+      <div className="p-4 space-y-4 border-t" style={{ borderColor: "var(--border)" }}>
+        {children}
+      </div>
+    </details>
   );
 }
 
@@ -67,7 +89,7 @@ function Toggle({ label, checked, onChange, disabled }: { label: string; checked
       <span className="text-xs" style={{ color: "var(--text-muted)" }}>{label}</span>
       <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)}
         className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${checked ? "bg-emerald-600" : "bg-neutral-700"}`}>
-        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-6" : "translate-x-1"}`} />
+        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-0.5" : "-translate-x-4"}`} />
       </button>
     </div>
   );
@@ -119,6 +141,10 @@ function OverlayCard({ ov, i, maxDur, disabled, onChange, onRemove }: {
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export default function StudioPage() {
+  // Navigation & Flow state
+  const [activeMode, setActiveMode] = useState<"single" | "batch">("single");
+  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
+
   // Download
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
@@ -338,6 +364,7 @@ export default function StudioPage() {
       setSrcUrl(url.trim());
       setThumb(data.thumbnail ? `data:image/jpeg;base64,${data.thumbnail}` : null);
       resetEdit();
+      setActiveStep(2);
     } catch (e) {
       setDlErr(e instanceof Error ? e.message : "Download failed");
     } finally { setDlLoading(false); }
@@ -412,6 +439,7 @@ export default function StudioPage() {
       if (!res.ok) throw new Error(await apiError(res));
       const data = await res.json();
       setActiveId(data.edited_video_id);
+      setActiveStep(3);
     } catch (e) { setEditErr(e instanceof Error ? e.message : "Edit failed"); }
     finally { setEditLoading(false); }
   };
@@ -603,409 +631,421 @@ Respond with ONLY valid JSON, no markdown.`;
 
   return (
     <div className="flex flex-col gap-6 pt-8">
-
-      {/* ── PIPELINE PRESETS ─────────────────────────────────────── */}
-      <Card title="Pipeline Presets" subtitle="Save and load full download→edit→upload configurations.">
-        <div className="flex gap-2">
-          <Btn variant="ghost" onClick={() => { setPipelinePresetsOpen(o => !o); if (!pipelinePresetsOpen) loadPipelinePresets(); }}>
-            {pipelinePresetsOpen ? "▲ Hide" : "▼ Manage Pipeline Presets"}
-          </Btn>
-        </div>
-        {pipelinePresetsOpen && (
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <input value={pipelinePresetName} onChange={e => setPipelinePresetName(e.target.value)} placeholder="Preset name…"
-                className={`${inputCls} flex-1`} style={inputStyle} />
-              <Btn onClick={savePipelinePreset} disabled={!pipelinePresetName.trim()}>Save Current</Btn>
-            </div>
-            {pipelinePresets.length === 0 && <p className="text-xs" style={{ color: "var(--text-muted)" }}>No pipeline presets saved.</p>}
-            <div className="flex flex-wrap gap-2">
-              {pipelinePresets.map(p => (
-                <div key={p.id} className="flex items-center gap-1 rounded-lg border px-2 py-1" style={{ borderColor: "var(--border)" }}>
-                  <button type="button" className="text-xs text-emerald-400 hover:text-emerald-300" onClick={() => applyPipelinePreset(p.settings)}>⚡ {p.name}</button>
-                  <button type="button" className="text-xs text-red-400 ml-1" onClick={() => deletePipelinePreset(p.id)}>×</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {/* ── BATCH QUEUE ─────────────────────────────────────────── */}
-      <Card title="Batch Queue" subtitle="Paste multiple URLs (one per line) to download or auto-upload them.">
-        {/* Mode toggle */}
-        <div className="flex gap-2">
-          {["manual", "auto"].map(m => (
-            <button key={m} type="button" onClick={() => setBatchMode(m as "manual" | "auto")}
-              className={`flex-1 rounded-lg border py-1.5 text-xs font-semibold transition ${batchMode === m ? "border-emerald-500 bg-emerald-600/20 text-emerald-400" : "text-neutral-400"}`}
-              style={batchMode !== m ? { borderColor: "var(--border)" } : undefined}>
-              {m === "manual" ? "📋 Manual" : "⚡ Auto Pipeline"}
-            </button>
-          ))}
-        </div>
-        <textarea value={batchInput} onChange={e => setBatchInput(e.target.value)}
-          rows={3} placeholder={"https://www.tiktok.com/...\nhttps://www.instagram.com/reel/...\nhttps://x.com/user/status/..."}
-          className="rounded-lg border px-3 py-2 text-sm resize-none w-full outline-none focus:border-emerald-500"
-          style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
-
-        {batchMode === "manual" ? (
-          <div className="flex flex-wrap gap-2">
-            <Btn onClick={addToQueue} disabled={!batchInput.trim()}>Add to Queue</Btn>
-            <Btn variant="ghost" onClick={processQueue} disabled={batching || !queue.some(q => q.status === "pending")}>
-              {batching ? "Processing…" : "Process Queue"}
-            </Btn>
-            {queue.length > 0 && <Btn variant="danger" onClick={() => setQueue([])}>Clear</Btn>}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Privacy">
-                <select value={batchPrivacy} onChange={e => setBatchPrivacy(e.target.value as Privacy)}
-                  className="rounded-lg border px-2 py-2 text-sm w-full"
-                  style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
-                  <option value="public">Public</option>
-                  <option value="unlisted">Unlisted</option>
-                  <option value="private">Private</option>
-                </select>
-              </Field>
-              <Field label="YouTube Account">
-                <select value={batchAccount} onChange={e => setBatchAccount(e.target.value)}
-                  className="rounded-lg border px-2 py-2 text-sm w-full"
-                  style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
-                  {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
-              </Field>
-            </div>
-            <Inp label="Stagger uploads by (minutes, 0 = immediate)" type="number" min={0} max={1440} value={batchStagger} onChange={e => setBatchStagger(+e.target.value)} />
-            <Btn onClick={runAutoPipeline} disabled={batchRunning || !batchInput.trim()}>
-              {batchRunning ? "Pipeline Running…" : "▶ Run Pipeline"}
-            </Btn>
-          </div>
-        )}
-
-        {/* Manual queue status */}
-        {batchMode === "manual" && queue.length > 0 && (
-          <ul className="space-y-1">
-            {queue.map(q => (
-              <li key={q.id} className="flex items-start gap-2 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface2)" }}>
-                <span>{q.status === "pending" ? "⏳" : q.status === "processing" ? "⚙️" : q.status === "done" ? "✅" : "❌"}</span>
-                <span className="truncate flex-1" style={{ color: "var(--text)" }}>{q.label || q.url}</span>
-                {q.error && <span className="text-red-400 shrink-0">{q.error}</span>}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {/* Auto pipeline status */}
-        {batchMode === "auto" && batchStatus.length > 0 && (
-          <div className="space-y-1">
-            {batchStatus.map(i => (
-              <div key={i.video_id} className="flex items-center gap-2 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface2)" }}>
-                <span>{i.status === "batch_queued" ? "⏳" : i.status === "uploaded" ? "✅" : i.status.startsWith("error") ? "❌" : "⚙️"}</span>
-                <span className="truncate flex-1" style={{ color: "var(--text)" }}>{i.url.slice(0, 60)}</span>
-                <span className={`shrink-0 font-medium ${i.status === "uploaded" ? "text-emerald-400" : i.status.startsWith("error") ? "text-red-400" : "text-amber-400"}`}>{i.status}</span>
-                {i.youtube_url && <a href={i.youtube_url} target="_blank" rel="noreferrer" className="text-emerald-400 underline shrink-0">Watch ↗</a>}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {/* ── STEP 1: DOWNLOAD ────────────────────────────────────── */}
-      <Card title="Step 1 — Import" subtitle="Paste a URL from any supported platform.">
-        <div className="flex flex-wrap gap-2 text-xs">
-          {Object.entries(PLATFORM_EMOJI).map(([p, e]) => (
-            <span key={p} className="rounded border px-2 py-1" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>{e} {p}</span>
-          ))}
-        </div>
-        <Inp type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste video URL here…" onKeyDown={e => e.key === "Enter" && onDownload()} />
-        <Btn onClick={onDownload} disabled={dlLoading || !url.trim()}>{dlLoading ? "Downloading…" : "Download"}</Btn>
-        <ErrMsg msg={dlErr} />
-        {thumb && videoId && (
-          <div className="flex gap-4 items-center">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={thumb} alt="Thumbnail" className="h-24 w-auto rounded-lg object-cover border" style={{ borderColor: "var(--border)" }} />
-            <div className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
-              {platform && <span className="text-emerald-400 font-medium">{PLATFORM_EMOJI[platform]} {platform}</span>}
-              {origTitle && <span className="font-medium line-clamp-2" style={{ color: "var(--text)" }}>{origTitle}</span>}
-              {origUploader && <span>by {origUploader}</span>}
-              <span>Duration: {duration.toFixed(1)}s</span>
-            </div>
-          </div>
-        )}
-        {/* In-browser video preview */}
-        {videoId && (
-          <div className="pt-1">
-            <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>Preview</p>
-            <video src={`${API}/video/${videoId}/file`} controls className="w-full rounded-lg border max-h-72" style={{ borderColor: "var(--border)" }} />
-          </div>
-        )}
-      </Card>
-
-      {/* ── STEP 2: EDIT ────────────────────────────────────────── */}
-      <Card title="Step 2 — Edit (optional)" subtitle="All edits are processed server-side by ffmpeg." disabled={!videoId}>
-
-        {/* Trim */}
-        <SectionHead>Trim</SectionHead>
-        <Field label={`Start: ${trimStart.toFixed(1)}s`}>
-          <input type="range" min={0} max={maxDur} step={0.1} value={trimStart} className="w-full accent-emerald-500"
-            onChange={e => { const v = +e.target.value; setTrimStart(v); if (v >= trimEnd) setTrimEnd(Math.min(maxDur, v + 0.1)); }} />
-        </Field>
-        <Field label={`End: ${trimEnd.toFixed(1)}s`}>
-          <input type="range" min={0} max={maxDur} step={0.1} value={trimEnd} className="w-full accent-emerald-500"
-            onChange={e => { const v = +e.target.value; setTrimEnd(v); if (v <= trimStart) setTrimStart(Math.max(0, v - 0.1)); }} />
-        </Field>
-
-        <Divider />
-
-        {/* Color Grading */}
-        <SectionHead>Color Grading</SectionHead>
-        {[["Brightness", brightness, setBrightness, 0.5, 2.0], ["Contrast", contrast, setContrast, 0.5, 2.0], ["Saturation", saturation, setSaturation, 0.0, 3.0]].map(([label, val, set, mn, mx]) => (
-          <Field key={label as string} label={`${label}: ${(val as number).toFixed(2)}×`}>
-            <input type="range" min={mn as number} max={mx as number} step={0.05} value={val as number} className="w-full accent-emerald-500"
-              onChange={e => (set as (v: number) => void)(+e.target.value)} />
-          </Field>
+      {/* ── MODES TAB ────────────────────────────────────────────── */}
+      <div className="flex justify-center gap-2 mb-2 p-1.5 rounded-xl border" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+        {(['single', 'batch'] as const).map(m => (
+          <button key={m} type="button" onClick={() => setActiveMode(m)}
+            className={`px-6 py-2 rounded-lg text-sm font-semibold transition flex-1 ${activeMode === m ? 'bg-emerald-600 text-white shadow-md' : 'text-neutral-400 hover:bg-white/5'}`}>
+            {m === 'single' ? 'Single Video Wizard' : '⚡ Batch Pipeline'}
+          </button>
         ))}
+      </div>
 
-        <Divider />
-
-        {/* Speed */}
-        <SectionHead>Playback Speed</SectionHead>
-        <div className="flex flex-wrap gap-2">
-          {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4].map(s => (
-            <button key={s} type="button" onClick={() => setSpeed(s)}
-              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${speed === s ? "border-emerald-500 bg-emerald-600/20 text-emerald-300" : "text-neutral-400 hover:border-neutral-500"}`}
-              style={speed !== s ? { borderColor: "var(--border)" } : undefined}>{s}×</button>
-          ))}
-        </div>
-
-        <Divider />
-
-        {/* Transform */}
-        <SectionHead>Transform</SectionHead>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Rotate">
-            <div className="flex gap-1">
-              {[0, 90, 180, 270].map(r => (
-                <button key={r} type="button" onClick={() => setRotate(r)}
-                  className={`flex-1 rounded-lg border py-1.5 text-xs font-medium transition ${rotate === r ? "border-emerald-500 bg-emerald-600/20 text-emerald-300" : "text-neutral-400"}`}
-                  style={rotate !== r ? { borderColor: "var(--border)" } : undefined}>{r}°</button>
-              ))}
-            </div>
-          </Field>
-        </div>
-        <Toggle label="Flip Horizontal" checked={flipH} onChange={setFlipH} />
-        <Toggle label="Flip Vertical" checked={flipV} onChange={setFlipV} />
-
-        <Divider />
-
-        {/* Format */}
-        <SectionHead>Format & Sizing</SectionHead>
-        <Toggle label="Crop to 9:16 (Shorts / Reels)" checked={crop916} onChange={setCrop916} />
-        <Toggle label="Auto-resize to 1080×1920" checked={autoResize} onChange={setAutoResize} />
-
-        <Divider />
-
-        {/* Audio */}
-        <SectionHead>Audio</SectionHead>
-        <Toggle label="Mute audio" checked={mute} onChange={setMute} />
-        <Toggle label="Remove silence" checked={removeSilence} onChange={setRemoveSilence} />
-        <Field label="Background music">
-          <div className="flex items-center gap-2">
-            <Btn variant="ghost" onClick={() => musicRef.current?.click()} disabled={musicLoading}>
-              {musicLoading ? "Uploading…" : musicName ? `🎵 ${musicName}` : "Upload MP3"}
-            </Btn>
-            {musicName && <Btn variant="danger" onClick={() => { setMusicId(""); setMusicName(""); }}>Remove</Btn>}
-          </div>
-          <input ref={musicRef} type="file" accept="audio/*" className="hidden" onChange={onMusicChange} />
-        </Field>
-
-        <Divider />
-
-        {/* Fade */}
-        <SectionHead>Fade</SectionHead>
-        <div className="grid grid-cols-2 gap-3">
-          <Inp label="Fade in (s)" type="number" min={0} max={10} step={0.1} value={fadeIn} onChange={e => setFadeIn(+e.target.value)} />
-          <Inp label="Fade out (s)" type="number" min={0} max={10} step={0.1} value={fadeOut} onChange={e => setFadeOut(+e.target.value)} />
-        </div>
-
-        <Divider />
-
-        {/* Watermark */}
-        <SectionHead>Watermark</SectionHead>
-        <Inp label="Corner text (bottom-right)" type="text" value={watermark} onChange={e => setWatermark(e.target.value)} placeholder="@YourChannel" />
-
-        <Divider />
-
-        {/* Text Overlays */}
-        <SectionHead>Text Overlays ({overlays.length})</SectionHead>
-        {overlays.length === 0 && <p className="text-xs" style={{ color: "var(--text-muted)" }}>No overlays yet.</p>}
-        {overlays.map((ov, i) => (
-          <OverlayCard key={ov.id} ov={ov} i={i} maxDur={maxDur} disabled={!videoId}
-            onChange={(id, p) => setOverlays(prev => prev.map(o => o.id === id ? { ...o, ...p } : o))}
-            onRemove={id => setOverlays(prev => prev.filter(o => o.id !== id))} />
-        ))}
-        <Btn variant="ghost" onClick={() => setOverlays(prev => [...prev, makeOverlay(duration)])}>+ Add Overlay</Btn>
-
-        <Divider />
-
-        {/* Presets */}
-        <SectionHead>Edit Presets</SectionHead>
-        <Btn variant="ghost" onClick={() => { setPresetsOpen(o => !o); if (!presetsOpen) loadServerPresets(); }}>
-          {presetsOpen ? "▲ Hide Presets" : "▼ Show Presets"}
-        </Btn>
-        {presetsOpen && (
-          <div className="space-y-3">
+      {activeMode === "single" && (
+        <div className="flex flex-col gap-4">
+          {/* ── PIPELINE PRESETS ─────────────────────────────────────── */}
+          <Card collapsed={activeStep !== 1} title="Pipeline Presets" subtitle="Save and load full download→edit→upload configurations.">
             <div className="flex gap-2">
-              <input value={presetName} onChange={e => setPresetName(e.target.value)} placeholder="Preset name…"
-                className={`${inputCls} flex-1`} style={inputStyle} />
-              <Btn onClick={savePreset} disabled={!presetName.trim()}>Save</Btn>
-            </div>
-            {serverPresets.length === 0 && <p className="text-xs" style={{ color: "var(--text-muted)" }}>No saved presets.</p>}
-            <div className="flex flex-wrap gap-2">
-              {serverPresets.map(p => (
-                <div key={p.id} className="flex items-center gap-1 rounded-lg border px-2 py-1" style={{ borderColor: "var(--border)" }}>
-                  <button type="button" className="text-xs text-emerald-400 hover:text-emerald-300" onClick={() => applySettings(p.settings)}>{p.name}</button>
-                  <button type="button" className="text-xs text-red-400 ml-1" onClick={() => deletePreset(p.id)}>×</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <ErrMsg msg={editErr} />
-        <div className="flex flex-wrap gap-3 pt-1">
-          <Btn onClick={onApplyEdits} disabled={!videoId || editLoading}>{editLoading ? "Applying…" : "Apply Edits"}</Btn>
-          <Btn variant="ghost" onClick={() => setActiveId(videoId)} disabled={!videoId}>Skip Edits</Btn>
-        </div>
-        {activeId && activeId !== videoId && (
-          <p className="text-xs text-emerald-400">✓ Edits applied — ready to upload.</p>
-        )}
-        {activeId && (
-          <div className="pt-1">
-            <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>Edited preview</p>
-            <video key={activeId} src={`${API}/video/${activeId}/file`} controls className="w-full rounded-lg border max-h-72" style={{ borderColor: "var(--border)" }} />
-          </div>
-        )}
-      </Card>
-
-      {/* ── STEP 3: UPLOAD ──────────────────────────────────────── */}
-      <Card title="Step 3 — Upload to YouTube" subtitle="Fill in metadata and publish." disabled={!activeId}>
-
-        {/* AI Generate button */}
-        <div className="flex items-center gap-3">
-          <Btn variant="ai" onClick={onAiGenerate} disabled={aiLoading || !videoId}>
-            {aiLoading ? "Generating…" : "✨ AI Generate Title & Tags"}
-          </Btn>
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Powered by puter.js (GPT-4o, free)</span>
-        </div>
-        <ErrMsg msg={aiErr} />
-
-        {/* YouTube Account */}
-        <div className="flex gap-4">
-          <Field label="YouTube Account">
-            <div className="flex items-center gap-2">
-              <select value={selectedYtAccount} onChange={e => setSelectedYtAccount(e.target.value)}
-                className="rounded-lg border px-2 py-2 text-sm max-w-48"
-                style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
-                {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
-              </select>
-              <Btn variant="ghost" onClick={onAddYtAccount} disabled={oauthLoading}>
-                {oauthLoading ? "Opening…" : "+ Add Account"}
+              <Btn variant="ghost" onClick={() => { setPipelinePresetsOpen(o => !o); if (!pipelinePresetsOpen) loadPipelinePresets(); }}>
+                {pipelinePresetsOpen ? "▲ Hide" : "▼ Manage Pipeline Presets"}
               </Btn>
             </div>
-          </Field>
-        </div>
-
-        {/* Headless OAuth flow */}
-        {oauthStep === "url" && (
-          <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)", background: "var(--surface2)" }}>
-            <p className="text-sm font-medium" style={{ color: "var(--text)" }}>🔑 Authorize <strong>{oauthAccountName}</strong></p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>A Google sign-in page has opened. Sign in, then copy the code shown and paste it below.</p>
-            {oauthUrl && <a href={oauthUrl} target="_blank" rel="noreferrer" className="text-xs text-emerald-400 underline">Re-open auth page ↗</a>}
-            <div className="flex gap-2">
-              <input value={oauthCode} onChange={e => setOauthCode(e.target.value)} placeholder="Paste Google code here…"
-                className={`${inputCls} flex-1`} style={inputStyle} />
-              <Btn onClick={() => { setOauthStep("code"); confirmOauthCode(); }} disabled={!oauthCode.trim() || oauthLoading}>Confirm</Btn>
-              <Btn variant="danger" onClick={() => { setOauthStep("idle"); setOauthCode(""); }}>Cancel</Btn>
-            </div>
-            {oauthErr && <p className="text-xs text-red-400">{oauthErr}</p>}
-          </div>
-        )}
-
-        {/* Quota Indicator */}
-        {quotaInfo && (
-          <div className="rounded-lg border px-3 py-2 text-xs" style={{
-            borderColor: "var(--border)",
-            background: quotaInfo.used > 9000 ? "rgba(239,68,68,0.1)" : quotaInfo.used > 7000 ? "rgba(245,158,11,0.1)" : "rgba(16,185,129,0.1)",
-            color: quotaInfo.used > 9000 ? "#ef4444" : quotaInfo.used > 7000 ? "#f59e0b" : "#10b981",
-          }}>
-            Quota: {quotaInfo.used.toLocaleString()}/10,000 units today — ~{quotaInfo.uploads_remaining} uploads left
-          </div>
-        )}
-
-        <Inp label="Title" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Your video title" />
-        <Field label="Description">
-          <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Describe your video…"
-            className="rounded-lg border px-3 py-2 text-sm resize-none w-full outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-            style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
-        </Field>
-        <Inp label="Tags (comma-separated)" type="text" value={tagsRaw} onChange={e => setTagsRaw(e.target.value)} placeholder="shorts, viral, reel" />
-        <Field label="Privacy">
-          <select value={privacy} onChange={e => setPrivacy(e.target.value as Privacy)}
-            className="rounded-lg border px-2 py-2 text-sm w-full"
-            style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
-            <option value="public">Public</option>
-            <option value="unlisted">Unlisted</option>
-            <option value="private">Private</option>
-          </select>
-        </Field>
-        <Inp label="Schedule for later (optional — leave empty for immediate upload)" type="datetime-local" value={scheduledAt} onChange={e => setScheduledAt(e.target.value)} />
-
-        {/* Custom Thumbnail */}
-        <Divider />
-        <SectionHead>Custom Thumbnail</SectionHead>
-        <Toggle label="Use custom thumbnail" checked={useThumbnail} onChange={setUseThumbnail} />
-        {useThumbnail && (
-          <div className="space-y-3">
-            <Inp label="Extract from video at second" type="number" min={0} max={duration || 300} step={0.5} value={thumbnailAtSec}
-              onChange={e => { setThumbnailAtSec(+e.target.value); fetchThumbnailPreview(videoId || "", +e.target.value); }} />
-            <Btn variant="ghost" onClick={() => fetchThumbnailPreview(videoId || "", thumbnailAtSec)}>Preview Frame</Btn>
-            {thumbnailPreview && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={thumbnailPreview} alt="Thumbnail preview" className="rounded-lg border h-28 object-cover" style={{ borderColor: "var(--border)" }}
-                onError={() => setThumbnailPreview(null)} />
+            {pipelinePresetsOpen && (
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <input value={pipelinePresetName} onChange={e => setPipelinePresetName(e.target.value)} placeholder="Preset name…"
+                    className={`${inputCls} flex-1`} style={inputStyle} />
+                  <Btn onClick={savePipelinePreset} disabled={!pipelinePresetName.trim()}>Save Current</Btn>
+                </div>
+                {pipelinePresets.length === 0 && <p className="text-xs" style={{ color: "var(--text-muted)" }}>No pipeline presets saved.</p>}
+                <div className="flex flex-wrap gap-2">
+                  {pipelinePresets.map(p => (
+                    <div key={p.id} className="flex items-center gap-1 rounded-lg border px-2 py-1" style={{ borderColor: "var(--border)" }}>
+                      <button type="button" className="text-xs text-emerald-400 hover:text-emerald-300" onClick={() => applyPipelinePreset(p.settings)}>⚡ {p.name}</button>
+                      <button type="button" className="text-xs text-red-400 ml-1" onClick={() => deletePipelinePreset(p.id)}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
-          </div>
-        )}
+          </Card>
 
-        {/* Webhook */}
-        <Divider />
-        <SectionHead>Webhook (optional)</SectionHead>
-        <Inp label="Webhook URL" type="url" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} placeholder="https://your-site.com/webhook or Discord webhook URL" />
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>POSTed with video details on upload completion.</p>
-
-        <Divider />
-
-        <Btn onClick={onUpload} disabled={!activeId || upLoading}>{upLoading ? "Uploading…" : scheduledAt ? "Schedule Upload" : "Upload to YouTube"}</Btn>
-
-        {upLoading && (
-          <div>
-            <div className="h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--surface2)" }}>
-              <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${upProg}%` }} />
+          {/* ── STEP 1: DOWNLOAD ────────────────────────────────────── */}
+          <Card collapsed={activeStep !== 1} onHeaderClick={() => setActiveStep(1)} title="Step 1 — Import" subtitle="Paste a URL from any supported platform.">
+            <div className="flex flex-wrap gap-2 text-xs">
+              {Object.entries(PLATFORM_EMOJI).map(([p, e]) => (
+                <span key={p} className="rounded border px-2 py-1" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>{e} {p}</span>
+              ))}
             </div>
-            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Uploading… ({upProg}%)</p>
-          </div>
-        )}
-        {ytUrl && (
-          <p className="text-sm">
-            {ytUrl.startsWith("[Scheduled]")
-              ? <span className="text-emerald-400">{ytUrl}</span>
-              : <><span style={{ color: "var(--text-muted)" }}>Live: </span><a href={ytUrl} target="_blank" rel="noreferrer" className="text-emerald-400 underline hover:text-emerald-300">{ytUrl}</a></>}
-          </p>
-        )}
-        <ErrMsg msg={upErr} />
-      </Card>
+            <Inp type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste video URL here…" onKeyDown={e => e.key === "Enter" && onDownload()} />
+            <Btn onClick={onDownload} disabled={dlLoading || !url.trim()}>{dlLoading ? "Downloading…" : "Download"}</Btn>
+            <ErrMsg msg={dlErr} />
+            {thumb && videoId && (
+              <div className="flex gap-4 items-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={thumb} alt="Thumbnail" className="h-24 w-auto rounded-lg object-cover border" style={{ borderColor: "var(--border)" }} />
+                <div className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                  {platform && <span className="text-emerald-400 font-medium">{PLATFORM_EMOJI[platform]} {platform}</span>}
+                  {origTitle && <span className="font-medium line-clamp-2" style={{ color: "var(--text)" }}>{origTitle}</span>}
+                  {origUploader && <span>by {origUploader}</span>}
+                  <span>Duration: {duration.toFixed(1)}s</span>
+                </div>
+              </div>
+            )}
+            {/* In-browser video preview */}
+            {videoId && (
+              <div className="pt-1">
+                <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>Preview</p>
+                <video src={`${API}/video/${videoId}/file`} controls className="w-full rounded-lg border max-h-72" style={{ borderColor: "var(--border)" }} />
+              </div>
+            )}
+          </Card>
+
+          {/* ── STEP 2: EDIT ────────────────────────────────────────── */}
+          <Card collapsed={activeStep !== 2} onHeaderClick={() => videoId && setActiveStep(2)} title="Step 2 — Edit (optional)" subtitle="All edits are processed server-side by ffmpeg." disabled={!videoId}>
+
+            {/* Trim */}
+            <SectionHead>Trim</SectionHead>
+            <Field label={`Start: ${trimStart.toFixed(1)}s`}>
+              <input type="range" min={0} max={maxDur} step={0.1} value={trimStart} className="w-full accent-emerald-500"
+                onChange={e => { const v = +e.target.value; setTrimStart(v); if (v >= trimEnd) setTrimEnd(Math.min(maxDur, v + 0.1)); }} />
+            </Field>
+            <Field label={`End: ${trimEnd.toFixed(1)}s`}>
+              <input type="range" min={0} max={maxDur} step={0.1} value={trimEnd} className="w-full accent-emerald-500"
+                onChange={e => { const v = +e.target.value; setTrimEnd(v); if (v <= trimStart) setTrimStart(Math.max(0, v - 0.1)); }} />
+            </Field>
+
+            <Divider />
+
+            <div className="space-y-3 mt-6">
+              <CollapsibleSection title="🎨 Color Grading">
+                {[["Brightness", brightness, setBrightness, 0.5, 2.0], ["Contrast", contrast, setContrast, 0.5, 2.0], ["Saturation", saturation, setSaturation, 0.0, 3.0]].map(([label, val, set, mn, mx]) => (
+                  <Field key={label as string} label={`${label}: ${(val as number).toFixed(2)}×`}>
+                    <input type="range" min={mn as number} max={mx as number} step={0.05} value={val as number} className="w-full accent-emerald-500"
+                      onChange={e => (set as (v: number) => void)(+e.target.value)} />
+                  </Field>
+                ))}
+
+              </CollapsibleSection>
+              <CollapsibleSection title="⚡ Playback Speed">
+                <div className="flex flex-wrap gap-2">
+                  {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4].map(s => (
+                    <button key={s} type="button" onClick={() => setSpeed(s)}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${speed === s ? "border-emerald-500 bg-emerald-600/20 text-emerald-300" : "text-neutral-400 hover:border-neutral-500"}`}
+                      style={speed !== s ? { borderColor: "var(--border)" } : undefined}>{s}×</button>
+                  ))}
+                </div>
+
+              </CollapsibleSection>
+              <CollapsibleSection title="🔄 Transform">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Rotate">
+                    <div className="flex gap-1">
+                      {[0, 90, 180, 270].map(r => (
+                        <button key={r} type="button" onClick={() => setRotate(r)}
+                          className={`flex-1 rounded-lg border py-1.5 text-xs font-medium transition ${rotate === r ? "border-emerald-500 bg-emerald-600/20 text-emerald-300" : "text-neutral-400"}`}
+                          style={rotate !== r ? { borderColor: "var(--border)" } : undefined}>{r}°</button>
+                      ))}
+                    </div>
+                  </Field>
+                </div>
+                <Toggle label="Flip Horizontal" checked={flipH} onChange={setFlipH} />
+                <Toggle label="Flip Vertical" checked={flipV} onChange={setFlipV} />
+
+              </CollapsibleSection>
+              <CollapsibleSection title="📐 Format & Sizing">
+                <Toggle label="Crop to 9:16 (Shorts / Reels)" checked={crop916} onChange={setCrop916} />
+                <Toggle label="Auto-resize to 1080×1920" checked={autoResize} onChange={setAutoResize} />
+
+              </CollapsibleSection>
+              <CollapsibleSection title="🎵 Audio">
+                <Toggle label="Mute audio" checked={mute} onChange={setMute} />
+                <Toggle label="Remove silence" checked={removeSilence} onChange={setRemoveSilence} />
+                <Field label="Background music">
+                  <div className="flex items-center gap-2">
+                    <Btn variant="ghost" onClick={() => musicRef.current?.click()} disabled={musicLoading}>
+                      {musicLoading ? "Uploading…" : musicName ? `🎵 ${musicName}` : "Upload MP3"}
+                    </Btn>
+                    {musicName && <Btn variant="danger" onClick={() => { setMusicId(""); setMusicName(""); }}>Remove</Btn>}
+                  </div>
+                  <input ref={musicRef} type="file" accept="audio/*" className="hidden" onChange={onMusicChange} />
+                </Field>
+
+              </CollapsibleSection>
+              <CollapsibleSection title="🌅 Fade IN/OUT">
+                <div className="grid grid-cols-2 gap-3">
+                  <Inp label="Fade in (s)" type="number" min={0} max={10} step={0.1} value={fadeIn} onChange={e => setFadeIn(+e.target.value)} />
+                  <Inp label="Fade out (s)" type="number" min={0} max={10} step={0.1} value={fadeOut} onChange={e => setFadeOut(+e.target.value)} />
+                </div>
+
+              </CollapsibleSection>
+              <CollapsibleSection title="©️ Watermark">
+                <Inp label="Corner text (bottom-right)" type="text" value={watermark} onChange={e => setWatermark(e.target.value)} placeholder="@YourChannel" />
+
+              </CollapsibleSection>
+              <CollapsibleSection title={`🔠 Text Overlays (${overlays.length})`}>
+                {overlays.length === 0 && <p className="text-xs" style={{ color: "var(--text-muted)" }}>No overlays yet.</p>}
+                {overlays.map((ov, i) => (
+                  <OverlayCard key={ov.id} ov={ov} i={i} maxDur={maxDur} disabled={!videoId}
+                    onChange={(id, p) => setOverlays(prev => prev.map(o => o.id === id ? { ...o, ...p } : o))}
+                    onRemove={id => setOverlays(prev => prev.filter(o => o.id !== id))} />
+                ))}
+                <Btn variant="ghost" onClick={() => setOverlays(prev => [...prev, makeOverlay(duration)])}>+ Add Overlay</Btn>
+              </CollapsibleSection>
+              <CollapsibleSection title="💾 Edit Presets">
+                <Btn variant="ghost" onClick={() => { setPresetsOpen(o => !o); if (!presetsOpen) loadServerPresets(); }}>
+                  {presetsOpen ? "▲ Hide Presets" : "▼ Show Presets"}
+                </Btn>
+                {presetsOpen && (
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <input value={presetName} onChange={e => setPresetName(e.target.value)} placeholder="Preset name…"
+                        className={`${inputCls} flex-1`} style={inputStyle} />
+                      <Btn onClick={savePreset} disabled={!presetName.trim()}>Save</Btn>
+                    </div>
+                    {serverPresets.length === 0 && <p className="text-xs" style={{ color: "var(--text-muted)" }}>No saved presets.</p>}
+                    <div className="flex flex-wrap gap-2">
+                      {serverPresets.map(p => (
+                        <div key={p.id} className="flex items-center gap-1 rounded-lg border px-2 py-1" style={{ borderColor: "var(--border)" }}>
+                          <button type="button" className="text-xs text-emerald-400 hover:text-emerald-300" onClick={() => applySettings(p.settings)}>{p.name}</button>
+                          <button type="button" className="text-xs text-red-400 ml-1" onClick={() => deletePreset(p.id)}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CollapsibleSection>
+            </div>
+
+            <ErrMsg msg={editErr} />
+            <div className="flex flex-wrap gap-3 pt-1">
+              <Btn onClick={onApplyEdits} disabled={!videoId || editLoading}>{editLoading ? "Applying…" : "Apply Edits"}</Btn>
+              <Btn variant="ghost" onClick={() => setActiveId(videoId)} disabled={!videoId}>Skip Edits</Btn>
+            </div>
+            {activeId && activeId !== videoId && (
+              <p className="text-xs text-emerald-400">✓ Edits applied — ready to upload.</p>
+            )}
+            {activeId && (
+              <div className="pt-1">
+                <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>Edited preview</p>
+                <video key={activeId} src={`${API}/video/${activeId}/file`} controls className="w-full rounded-lg border max-h-72" style={{ borderColor: "var(--border)" }} />
+              </div>
+            )}
+          </Card>
+
+          {/* ── STEP 3: UPLOAD ──────────────────────────────────────── */}
+          <Card collapsed={activeStep !== 3} onHeaderClick={() => activeId && setActiveStep(3)} title="Step 3 — Upload to YouTube" subtitle="Fill in metadata and publish." disabled={!activeId}>
+
+            {/* AI Generate button */}
+            <div className="flex items-center gap-3">
+              <Btn variant="ai" onClick={onAiGenerate} disabled={aiLoading || !videoId}>
+                {aiLoading ? "Generating…" : "✨ AI Generate Title & Tags"}
+              </Btn>
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>Powered by puter.js (GPT-4o, free)</span>
+            </div>
+            <ErrMsg msg={aiErr} />
+
+            {/* YouTube Account */}
+            <div className="flex gap-4">
+              <Field label="YouTube Account">
+                <div className="flex items-center gap-2">
+                  <select value={selectedYtAccount} onChange={e => setSelectedYtAccount(e.target.value)}
+                    className="rounded-lg border px-2 py-2 text-sm max-w-48"
+                    style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                    {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                  <Btn variant="ghost" onClick={onAddYtAccount} disabled={oauthLoading}>
+                    {oauthLoading ? "Opening…" : "+ Add Account"}
+                  </Btn>
+                </div>
+              </Field>
+            </div>
+
+            {/* Headless OAuth flow */}
+            {oauthStep === "url" && (
+              <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)", background: "var(--surface2)" }}>
+                <p className="text-sm font-medium" style={{ color: "var(--text)" }}>🔑 Authorize <strong>{oauthAccountName}</strong></p>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>A Google sign-in page has opened. Sign in, then copy the code shown and paste it below.</p>
+                {oauthUrl && <a href={oauthUrl} target="_blank" rel="noreferrer" className="text-xs text-emerald-400 underline">Re-open auth page ↗</a>}
+                <div className="flex gap-2">
+                  <input value={oauthCode} onChange={e => setOauthCode(e.target.value)} placeholder="Paste Google code here…"
+                    className={`${inputCls} flex-1`} style={inputStyle} />
+                  <Btn onClick={() => { setOauthStep("code"); confirmOauthCode(); }} disabled={!oauthCode.trim() || oauthLoading}>Confirm</Btn>
+                  <Btn variant="danger" onClick={() => { setOauthStep("idle"); setOauthCode(""); }}>Cancel</Btn>
+                </div>
+                {oauthErr && <p className="text-xs text-red-400">{oauthErr}</p>}
+              </div>
+            )}
+
+            {/* Quota Indicator */}
+            {quotaInfo && (
+              <div className="rounded-lg border px-3 py-2 text-xs" style={{
+                borderColor: "var(--border)",
+                background: quotaInfo.used > 9000 ? "rgba(239,68,68,0.1)" : quotaInfo.used > 7000 ? "rgba(245,158,11,0.1)" : "rgba(16,185,129,0.1)",
+                color: quotaInfo.used > 9000 ? "#ef4444" : quotaInfo.used > 7000 ? "#f59e0b" : "#10b981",
+              }}>
+                Quota: {quotaInfo.used.toLocaleString()}/10,000 units today — ~{quotaInfo.uploads_remaining} uploads left
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-4">
+                <Inp label="Title" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Your video title" />
+                <Field label="Description">
+                  <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={6} placeholder="Describe your video…"
+                    className="rounded-lg border px-3 py-2 text-sm resize-none w-full outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
+                </Field>
+              </div>
+              <div className="space-y-4">
+                <Inp label="Tags (comma-separated)" type="text" value={tagsRaw} onChange={e => setTagsRaw(e.target.value)} placeholder="shorts, viral, reel" />
+                <Field label="Privacy">
+                  <select value={privacy} onChange={e => setPrivacy(e.target.value as Privacy)}
+                    className="rounded-lg border px-2 py-2 text-sm w-full"
+                    style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                    <option value="public">Public</option>
+                    <option value="unlisted">Unlisted</option>
+                    <option value="private">Private</option>
+                  </select>
+                </Field>
+                <Inp label="Schedule for later (optional — leave empty for immediate upload)" type="datetime-local" value={scheduledAt} onChange={e => setScheduledAt(e.target.value)} />
+              </div>
+            </div>
+
+            {/* Custom Thumbnail */}
+            <Divider />
+            <SectionHead>Custom Thumbnail</SectionHead>
+            <Toggle label="Use custom thumbnail" checked={useThumbnail} onChange={setUseThumbnail} />
+            {useThumbnail && (
+              <div className="space-y-3">
+                <Inp label="Extract from video at second" type="number" min={0} max={duration || 300} step={0.5} value={thumbnailAtSec}
+                  onChange={e => { setThumbnailAtSec(+e.target.value); fetchThumbnailPreview(videoId || "", +e.target.value); }} />
+                <Btn variant="ghost" onClick={() => fetchThumbnailPreview(videoId || "", thumbnailAtSec)}>Preview Frame</Btn>
+                {thumbnailPreview && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={thumbnailPreview} alt="Thumbnail preview" className="rounded-lg border h-28 object-cover" style={{ borderColor: "var(--border)" }}
+                    onError={() => setThumbnailPreview(null)} />
+                )}
+              </div>
+            )}
+
+            {/* Webhook */}
+            <Divider />
+            <SectionHead>Webhook (optional)</SectionHead>
+            <Inp label="Webhook URL" type="url" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} placeholder="https://your-site.com/webhook or Discord webhook URL" />
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>POSTed with video details on upload completion.</p>
+
+            <Divider />
+
+            <Btn onClick={onUpload} disabled={!activeId || upLoading}>{upLoading ? "Uploading…" : scheduledAt ? "Schedule Upload" : "Upload to YouTube"}</Btn>
+
+            {upLoading && (
+              <div>
+                <div className="h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--surface2)" }}>
+                  <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${upProg}%` }} />
+                </div>
+                <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Uploading… ({upProg}%)</p>
+              </div>
+            )}
+            {ytUrl && (
+              <p className="text-sm">
+                {ytUrl.startsWith("[Scheduled]")
+                  ? <span className="text-emerald-400">{ytUrl}</span>
+                  : <><span style={{ color: "var(--text-muted)" }}>Live: </span><a href={ytUrl} target="_blank" rel="noreferrer" className="text-emerald-400 underline hover:text-emerald-300">{ytUrl}</a></>}
+              </p>
+            )}
+            <ErrMsg msg={upErr} />
+          </Card>
+        </div>
+      )}
+
+
+
+
+      {activeMode === "batch" && (
+        <div className="flex flex-col gap-6">
+          {/* ── BATCH QUEUE ─────────────────────────────────────────── */}
+          <Card title="Batch Pipeline" subtitle="Paste multiple URLs to download or auto-upload them.">
+            {/* Mode toggle */}
+            <div className="flex gap-2">
+              {["manual", "auto"].map(m => (
+                <button key={m} type="button" onClick={() => setBatchMode(m as "manual" | "auto")}
+                  className={`flex-1 rounded-lg border py-1.5 text-xs font-semibold transition ${batchMode === m ? "border-emerald-500 bg-emerald-600/20 text-emerald-400" : "text-neutral-400"}`}
+                  style={batchMode !== m ? { borderColor: "var(--border)" } : undefined}>
+                  {m === "manual" ? "📋 Manual" : "⚡ Auto Pipeline"}
+                </button>
+              ))}
+            </div>
+            <textarea value={batchInput} onChange={e => setBatchInput(e.target.value)}
+              rows={3} placeholder={"https://www.tiktok.com/...\nhttps://www.instagram.com/reel/...\nhttps://x.com/user/status/..."}
+              className="rounded-lg border px-3 py-2 text-sm resize-none w-full outline-none focus:border-emerald-500"
+              style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
+
+            {batchMode === "manual" ? (
+              <div className="flex flex-wrap gap-2">
+                <Btn onClick={addToQueue} disabled={!batchInput.trim()}>Add to Queue</Btn>
+                <Btn variant="ghost" onClick={processQueue} disabled={batching || !queue.some(q => q.status === "pending")}>
+                  {batching ? "Processing…" : "Process Queue"}
+                </Btn>
+                {queue.length > 0 && <Btn variant="danger" onClick={() => setQueue([])}>Clear</Btn>}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Privacy">
+                    <select value={batchPrivacy} onChange={e => setBatchPrivacy(e.target.value as Privacy)}
+                      className="rounded-lg border px-2 py-2 text-sm w-full"
+                      style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                      <option value="public">Public</option>
+                      <option value="unlisted">Unlisted</option>
+                      <option value="private">Private</option>
+                    </select>
+                  </Field>
+                  <Field label="YouTube Account">
+                    <select value={batchAccount} onChange={e => setBatchAccount(e.target.value)}
+                      className="rounded-lg border px-2 py-2 text-sm w-full"
+                      style={{ borderColor: "var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                      {youtubeAccounts.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <Inp label="Stagger uploads by (minutes, 0 = immediate)" type="number" min={0} max={1440} value={batchStagger} onChange={e => setBatchStagger(+e.target.value)} />
+                <Btn onClick={runAutoPipeline} disabled={batchRunning || !batchInput.trim()}>
+                  {batchRunning ? "Pipeline Running…" : "▶ Run Pipeline"}
+                </Btn>
+              </div>
+            )}
+
+            {/* Manual queue status */}
+            {batchMode === "manual" && queue.length > 0 && (
+              <ul className="space-y-1">
+                {queue.map(q => (
+                  <li key={q.id} className="flex items-start gap-2 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface2)" }}>
+                    <span>{q.status === "pending" ? "⏳" : q.status === "processing" ? "⚙️" : q.status === "done" ? "✅" : "❌"}</span>
+                    <span className="truncate flex-1" style={{ color: "var(--text)" }}>{q.label || q.url}</span>
+                    {q.error && <span className="text-red-400 shrink-0">{q.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* Auto pipeline status */}
+            {batchMode === "auto" && batchStatus.length > 0 && (
+              <div className="space-y-1">
+                {batchStatus.map(i => (
+                  <div key={i.video_id} className="flex items-center gap-2 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface2)" }}>
+                    <span>{i.status === "batch_queued" ? "⏳" : i.status === "uploaded" ? "✅" : i.status.startsWith("error") ? "❌" : "⚙️"}</span>
+                    <span className="truncate flex-1" style={{ color: "var(--text)" }}>{i.url.slice(0, 60)}</span>
+                    <span className={`shrink-0 font-medium ${i.status === "uploaded" ? "text-emerald-400" : i.status.startsWith("error") ? "text-red-400" : "text-amber-400"}`}>{i.status}</span>
+                    {i.youtube_url && <a href={i.youtube_url} target="_blank" rel="noreferrer" className="text-emerald-400 underline shrink-0">Watch ↗</a>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
     </div>
   );
 }
