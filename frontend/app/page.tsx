@@ -580,7 +580,6 @@ Respond with ONLY valid JSON, no markdown.`;
       });
       if (!res.ok) throw new Error(await apiError(res));
       const data = await res.json();
-      setBatchId(data.batch_id);
       setBatchStatus(data.items);
       setBatchInput("");
       // Poll for status
