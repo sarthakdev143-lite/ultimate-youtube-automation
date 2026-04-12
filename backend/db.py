@@ -52,6 +52,18 @@ def init_db() -> None:
             conn.execute("ALTER TABLE history ADD COLUMN youtube_account TEXT DEFAULT 'default'")
         except sqlite3.OperationalError:
             pass  # Column already exists
+        try:
+            conn.execute("ALTER TABLE history ADD COLUMN privacy TEXT DEFAULT 'private'")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE history ADD COLUMN description TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE history ADD COLUMN tags_json TEXT DEFAULT '[]'")
+        except sqlite3.OperationalError:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS presets (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,13 +87,16 @@ def insert_history(
     status: str = "uploaded",
     scheduled_at: str | None = None,
     youtube_account: str = "default",
+    privacy: str = "private",
+    description: str = "",
+    tags_json: str = "[]",
 ) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO history
-               (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account),
+               (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account, privacy, description, tags_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (video_id, source_url, platform, title, youtube_url, status, scheduled_at, youtube_account, privacy, description, tags_json),
         )
         return cur.lastrowid  # type: ignore[return-value]
 

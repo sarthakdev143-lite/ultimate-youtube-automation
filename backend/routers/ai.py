@@ -38,6 +38,14 @@ def generate_subtitles(body: SubtitleBody):
 
     src = find_video_path(body.video_id)
 
+    MAX_SIZE_MB = 200
+    size_mb = src.stat().st_size / (1024 * 1024)
+    if size_mb > MAX_SIZE_MB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large for transcription ({size_mb:.0f} MB). Max is {MAX_SIZE_MB} MB.",
+        )
+
     # Extract audio for transcription
     audio_path = TMP_DIR / f"{body.video_id}_whisper.wav"
     run_ffmpeg(["-i", str(src), "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", str(audio_path)])

@@ -50,6 +50,9 @@ def upload_to_youtube(body: UploadBody):
             status="scheduled",
             scheduled_at=body.scheduled_at,
             youtube_account=body.youtube_account,
+            privacy=body.privacy,
+            description=body.description,
+            tags_json=json.dumps(body.tags),
         )
         return {"scheduled": True, "history_id": history_id, "scheduled_at": body.scheduled_at}
 

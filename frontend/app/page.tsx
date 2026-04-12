@@ -400,7 +400,16 @@ Respond with ONLY valid JSON, no markdown.`;
 
       const raw = typeof resp === "string" ? resp : (resp?.message?.content?.[0]?.text ?? resp?.message?.content ?? "{}");
       const cleaned = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
+      let parsed: Record<string, any> = {};
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        throw new Error(`AI returned invalid JSON. Raw response: ${cleaned.slice(0, 200)}`);
+      }
+
+      if (!parsed.title && !parsed.description && !parsed.tags) {
+        throw new Error("AI returned empty metadata. Try again.");
+      }
       if (parsed.title) setTitle(parsed.title);
       if (parsed.description) setDesc(parsed.description);
       if (Array.isArray(parsed.tags)) setTagsRaw(parsed.tags.join(", "));

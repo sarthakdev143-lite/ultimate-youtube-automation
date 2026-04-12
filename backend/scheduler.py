@@ -1,4 +1,5 @@
 """APScheduler background job: fires pending scheduled uploads."""
+import json
 import logging
 import mimetypes
 
@@ -22,6 +23,9 @@ def _process_scheduled_uploads() -> None:
         video_id: str = row["video_id"]
         title: str = row["title"] or "Untitled"
         youtube_account: str = row.get("youtube_account", "default")
+        privacy = row.get("privacy", "private")
+        description = row.get("description", "")
+        tags = json.loads(row.get("tags_json", "[]"))
 
         # Mark as processing to avoid double-firing
         update_history_status(history_id, "processing")
@@ -38,11 +42,11 @@ def _process_scheduled_uploads() -> None:
             request_body = {
                 "snippet": {
                     "title": title[:100],
-                    "description": "",
-                    "tags": [],
+                    "description": description[:5000],
+                    "tags": tags[:30],
                     "categoryId": "22",
                 },
-                "status": {"privacyStatus": "public"},
+                "status": {"privacyStatus": privacy},
             }
             mime, _ = mimetypes.guess_type(str(path))
             media = MediaFileUpload(
