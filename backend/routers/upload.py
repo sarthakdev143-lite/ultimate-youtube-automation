@@ -43,28 +43,7 @@ def upload_to_youtube(body: UploadBody):
 
     path = find_video_path(body.video_id)
 
-    # ── Scheduled upload ──────────────────────────────────────────────────
-    if body.scheduled_at:
-        try:
-            datetime.fromisoformat(body.scheduled_at)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid scheduled_at. Use ISO 8601 format.")
-        history_id = insert_history(
-            video_id=body.video_id,
-            source_url=body.source_url,
-            platform=body.platform,
-            title=body.title or "Untitled",
-            status="scheduled",
-            scheduled_at=body.scheduled_at,
-            youtube_account=body.youtube_account,
-            privacy=body.privacy,
-            description=body.description,
-            tags_json=json.dumps(body.tags),
-            webhook_url=body.webhook_url,
-        )
-        return {"scheduled": True, "history_id": history_id, "scheduled_at": body.scheduled_at}
-
-    # ── Immediate upload ──────────────────────────────────────────────────
+    # ── Upload Configuration ──────────────────────────────────────────────
     check_quota(body.youtube_account, 1600)
     youtube = get_youtube_service(body.youtube_account)
     request_body = {
@@ -76,6 +55,15 @@ def upload_to_youtube(body: UploadBody):
         },
         "status": {"privacyStatus": body.privacy},
     }
+
+    if body.scheduled_at:
+        try:
+            import datetime
+            datetime.datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at. Use ISO 8601 format.")
+        request_body["status"]["privacyStatus"] = "private"
+        request_body["status"]["publishAt"] = body.scheduled_at
     mime, _ = mimetypes.guess_type(str(path))
     media = MediaFileUpload(str(path), chunksize=-1, resumable=True, mimetype=mime or "application/octet-stream")
 

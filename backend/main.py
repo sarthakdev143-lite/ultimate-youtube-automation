@@ -6,16 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from db import init_db
-from scheduler import start_scheduler, stop_scheduler
 from routers import ai, analytics, batch, download, edit, history, upload
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    start_scheduler()
     yield
-    stop_scheduler()
 
 
 app = FastAPI(title="YT Automation Factory API", version="2.0.0", lifespan=lifespan)

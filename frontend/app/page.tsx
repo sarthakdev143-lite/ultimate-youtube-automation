@@ -630,7 +630,7 @@ Respond with ONLY valid JSON, no markdown.`;
           description: desc.trim(),
           tags: tagsRaw.split(",").map(t => t.trim()).filter(Boolean),
           privacy, source_url: srcUrl, platform: platform ?? "",
-          scheduled_at: scheduledAt || null,
+          scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
           youtube_account: selectedYtAccount,
           thumbnail_video_id: useThumbnail ? (videoId || "") : "",
           thumbnail_at_sec: thumbnailAtSec,
@@ -639,12 +639,8 @@ Respond with ONLY valid JSON, no markdown.`;
       });
       if (!res.ok) throw new Error(await apiError(res));
       const data = await res.json();
-      if (data.scheduled) {
-        setYtUrl(`[Scheduled] ID: ${data.history_id} at ${data.scheduled_at}`);
-      } else {
-        setYtUrl(data.youtube_url); setUpProg(100);
-        fetchQuota(selectedYtAccount);
-      }
+      setYtUrl(data.youtube_url); setUpProg(100);
+      fetchQuota(selectedYtAccount);
     } catch (e) { setUpErr(e instanceof Error ? e.message : "Upload failed"); setUpProg(0); }
     finally { clearInterval(tick); setUpLoading(false); }
   };

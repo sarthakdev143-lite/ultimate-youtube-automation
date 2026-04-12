@@ -138,19 +138,7 @@ def delete_history(history_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def get_scheduled_pending() -> list[dict]:
-    """Return scheduled rows whose scheduled_at time has passed."""
-    with get_db() as conn:
-        rows = conn.execute(
-            """SELECT * FROM history
-               WHERE status = 'scheduled'
-                 AND scheduled_at IS NOT NULL
-                 AND datetime(scheduled_at) <= datetime('now')""",
-        ).fetchall()
-        return [dict(r) for r in rows]
 
-
-# ---------------------------------------------------------------------------
 # Presets
 # ---------------------------------------------------------------------------
 
