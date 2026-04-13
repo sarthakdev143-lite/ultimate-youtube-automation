@@ -7,12 +7,15 @@ from fastapi.responses import JSONResponse
 
 from db import init_db
 from routers import ai, analytics, batch, download, edit, history, upload
+from telegram_bot import start_telegram_bot, stop_telegram_bot
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    await start_telegram_bot()
     yield
+    await stop_telegram_bot()
 
 
 app = FastAPI(title="YT Automation Factory API", version="2.0.0", lifespan=lifespan)

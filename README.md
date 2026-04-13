@@ -2,7 +2,7 @@
 
 A fully automated, multi-platform video pipeline. Download short-form content from 7 platforms, apply advanced FFmpeg editing, generate AI-optimized YouTube metadata, and batch-upload or schedule to multiple YouTube channels — all from a single web UI.
 
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Puter.js (free AI) — `frontend/`
+- **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS, Puter.js (free AI) — `frontend/`
 - **Backend:** FastAPI, `yt-dlp`, FFmpeg, APScheduler, SQLite — `backend/`
 
 ---
@@ -24,6 +24,13 @@ Download from **Instagram Reels, TikTok, Snapchat Spotlight, YouTube Shorts, Twi
 
 ### ✨ AI-Powered Metadata
 Uses **Puter.js** (GPT-4o, free, no API key) to generate title, description, and tags from video context, transcript, and original metadata.
+
+### 🤖 Telegram Bot Interface
+An async Telegram bot can run alongside FastAPI and act as a mobile-first control layer:
+- Send a supported reel/short URL to trigger download + metadata generation
+- Edit pending metadata with `/title`, `/desc`, `/tags`, `/privacy`
+- Upload with `/upload`, cancel with `/cancel`
+- Check quota with `/quota`, recent uploads with `/history`, and metrics with `/stats <history_id>`
 
 ### 🚀 Batch Pipeline (Auto & Manual)
 - **Manual mode:** Add URLs to a queue, download them one-by-one
@@ -123,6 +130,23 @@ venv\Scripts\activate        # macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
+
+### Telegram Bot Setup
+
+1. Create a Telegram bot via [@BotFather](https://t.me/BotFather) and copy the bot token.
+2. Get your chat ID from [@userinfobot](https://t.me/userinfobot).
+3. Get a Groq API key from [console.groq.com](https://console.groq.com).
+4. Add these values to `backend/.env`:
+   ```env
+   TELEGRAM_BOT_TOKEN=...
+   TELEGRAM_ALLOWED_CHAT_IDS=123456789
+   TELEGRAM_DEFAULT_ACCOUNT=default
+   TELEGRAM_DEFAULT_PRIVACY=private
+   TELEGRAM_WATERMARK=@YourChannel
+   GROQ_API_KEY=...
+   ```
+5. Restart the backend. The bot starts automatically during FastAPI startup.
+6. Send any supported URL to your bot to begin.
 
 **Frontend** (port **3000**):
 ```bash

@@ -7,6 +7,8 @@ python-multipart>=0.0.12
 APScheduler>=3.10.0
 pillow>=10.0.0
 httpx>=0.25.0
+python-telegram-bot>=21.0
+groq>=0.8.0
 
 # Optional — install for Whisper auto-subtitles (CPU-only, ~1 GB model download on first use):
 # faster-whisper>=1.0.0
