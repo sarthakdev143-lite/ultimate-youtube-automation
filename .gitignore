@@ -14,6 +14,7 @@ backend/tmp/*
 *.log
 client_secrets.json
 AGENT.md
+telegram_bot_agent_prompt.txt
 .env
 backend/factory.db
 token_*.json
