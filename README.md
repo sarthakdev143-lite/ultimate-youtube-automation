@@ -141,12 +141,25 @@ uvicorn main:app --reload
    TELEGRAM_BOT_TOKEN=...
    TELEGRAM_ALLOWED_CHAT_IDS=123456789
    TELEGRAM_DEFAULT_ACCOUNT=default
-   TELEGRAM_DEFAULT_PRIVACY=private
+   TELEGRAM_DEFAULT_PRIVACY=public
    TELEGRAM_WATERMARK=@YourChannel
    GROQ_API_KEY=...
    ```
 5. Restart the backend. The bot starts automatically during FastAPI startup.
 6. Send any supported URL to your bot to begin.
+
+#### Telegram zero-effort flow
+
+1. Send a reel/short URL.
+2. Tap one button: `Upload now`, `+1h`, `+6h`, or `+24h`.
+3. Optional: tweak metadata with `/title`, `/desc`, `/tags`, `/privacy`.
+
+Useful one-tap commands:
+- `/menu` — show persistent quick-action keyboard
+- `/status` — show current draft state
+- `/health` — bot + server runtime health
+- `/schedule 30m` or `/schedule tomorrow9am` — quick scheduling
+- `/schedule 2026-04-15T19:30:00Z` — exact UTC schedule
 
 **Frontend** (port **3000**):
 ```bash

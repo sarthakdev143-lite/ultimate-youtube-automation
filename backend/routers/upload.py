@@ -125,13 +125,15 @@ def upload_to_youtube(body: UploadBody):
         except:
             pass
 
+    history_status = "scheduled" if body.scheduled_at else "uploaded"
     insert_history(
         video_id=body.video_id,
         source_url=body.source_url,
         platform=body.platform,
         title=body.title or "Untitled",
         youtube_url=yt_url,
-        status="uploaded",
+        status=history_status,
+        scheduled_at=body.scheduled_at,
         youtube_account=body.youtube_account,
         privacy=body.privacy,
         description=body.description,

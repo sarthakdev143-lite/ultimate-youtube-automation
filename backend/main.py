@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from db import init_db
 from routers import ai, analytics, batch, download, edit, history, upload
-from telegram_bot import start_telegram_bot, stop_telegram_bot
+from telegram_bot import get_telegram_runtime_status, start_telegram_bot, stop_telegram_bot
 
 
 @asynccontextmanager
@@ -41,3 +41,8 @@ app.include_router(analytics.router)
 async def http_exception_handler(_, exc: HTTPException):
     detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
     return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True, "telegram": get_telegram_runtime_status()}
