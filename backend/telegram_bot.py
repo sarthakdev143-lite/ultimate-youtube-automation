@@ -452,6 +452,14 @@ async def _run_bot(token: str) -> None:
     await app.updater.start_polling()
 
 
+async def _run_bot_with_restart(token: str) -> None:
+    while True:
+        try:
+            await _run_bot(token)
+        except Exception as exc:
+            logger.exception("Bot crashed, restarting in 5s: %s", exc)
+            await asyncio.sleep(5)
+
 async def start_telegram_bot() -> None:
     global _bot_task, _allowed_chat_ids
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -459,7 +467,7 @@ async def start_telegram_bot() -> None:
         logger.warning("TELEGRAM_BOT_TOKEN not set — bot disabled.")
         return
     _allowed_chat_ids = _parse_allowed_chat_ids()
-    _bot_task = asyncio.create_task(_run_bot(token))
+    _bot_task = asyncio.create_task(_run_bot_with_restart(token))
 
 
 async def stop_telegram_bot() -> None:
