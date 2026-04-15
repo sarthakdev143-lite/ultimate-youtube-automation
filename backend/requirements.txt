@@ -1,7 +1,7 @@
 yt-dlp>=2024.1.0
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.2.0
-fastapi>=0.115.0
+fastapi>=0.115.0,<0.136.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.12
 APScheduler>=3.10.0
@@ -9,6 +9,7 @@ pillow>=10.0.0
 httpx>=0.25.0
 python-telegram-bot>=21.0
 groq>=0.8.0
+starlette>=0.41.0,<1.0.0
 
 # Optional — install for Whisper auto-subtitles (CPU-only, ~1 GB model download on first use):
 # faster-whisper>=1.0.0

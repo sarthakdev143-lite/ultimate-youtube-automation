@@ -43,14 +43,23 @@ def _resolve_webhook_url() -> str | None:
 async def lifespan(_: FastAPI):
     init_db()
     webhook_url = _resolve_webhook_url()
-    if webhook_url:
-        logger.info("Starting Telegram bot in WEBHOOK mode: %s", webhook_url)
-        await start_telegram_bot_webhook(webhook_url)
-    else:
-        logger.info("Starting Telegram bot in POLLING mode (local dev)")
-        await start_telegram_bot()
+    try:
+        if webhook_url:
+            logger.info("Starting Telegram bot in WEBHOOK mode: %s", webhook_url)
+            await start_telegram_bot_webhook(webhook_url)
+        else:
+            logger.info("Starting Telegram bot in POLLING mode (local dev)")
+            await start_telegram_bot()
+    except Exception:
+        logger.exception(
+            "Telegram bot failed to start — server will continue without it. "
+            "Check TELEGRAM_BOT_TOKEN and webhook URL."
+        )
     yield
-    await stop_telegram_bot()
+    try:
+        await stop_telegram_bot()
+    except Exception:
+        logger.exception("Error stopping Telegram bot during shutdown")
 
 
 app = FastAPI(title="YT Automation Factory API", version="2.0.0", lifespan=lifespan)
