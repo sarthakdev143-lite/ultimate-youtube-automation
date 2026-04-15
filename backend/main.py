@@ -43,10 +43,17 @@ def _resolve_webhook_url() -> str | None:
 async def lifespan(_: FastAPI):
     init_db()
     webhook_url = _resolve_webhook_url()
+    is_render = os.getenv("RENDER") == "true"
     try:
         if webhook_url:
             logger.info("Starting Telegram bot in WEBHOOK mode: %s", webhook_url)
             await start_telegram_bot_webhook(webhook_url)
+        elif is_render:
+            logger.error(
+                "Running on Render but neither WEBHOOK_URL nor RENDER_EXTERNAL_URL is set. "
+                "Telegram bot disabled. You MUST configure WEBHOOK_URL to use the bot here "
+                "because polling on Render causes Conflict errors."
+            )
         else:
             logger.info("Starting Telegram bot in POLLING mode (local dev)")
             await start_telegram_bot()
