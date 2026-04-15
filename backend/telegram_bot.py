@@ -15,12 +15,12 @@ from typing import Any
 from fastapi import HTTPException
 from groq import Groq
 from telegram import (
-    ChatAction,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
     Update,
 )
+from telegram.constants import ChatAction  # moved to constants in PTB v22
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
