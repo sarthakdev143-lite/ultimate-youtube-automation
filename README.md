@@ -3,7 +3,7 @@
 A fully automated, multi-platform video pipeline. Download short-form content from 7 platforms, apply advanced FFmpeg editing, generate AI-optimized YouTube metadata, and batch-upload or schedule to multiple YouTube channels — all from a single web UI.
 
 - **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS, Puter.js (free AI) — `frontend/`
-- **Backend:** FastAPI, `yt-dlp`, FFmpeg, APScheduler, SQLite — `backend/`
+- **Backend:** FastAPI, `yt-dlp`, FFmpeg, `faster-whisper`, Groq, Pillow, SQLite — `backend/`
 
 ---
 
@@ -26,7 +26,14 @@ Download from **Instagram Reels, TikTok, Snapchat Spotlight, YouTube Shorts, Twi
 
 ### ✨ AI-Powered Metadata
 
-Uses **Puter.js** (GPT-4o, free, no API key) to generate title, description, and tags from video context, transcript, and original metadata.
+A hybrid AI approach ensures high-quality SEO without bottlenecks:
+- **Studio Interface:** Uses **Puter.js** (GPT-4o, free) for real-time title/tag suggestions.
+- **Telegram Bot:** Uses **Groq (Llama-3.1-8b)** for rapid, context-aware metadata generation from video details.
+
+### 📝 Whisper Subtitles & Thumbnails
+
+- **Auto-Subtitles:** Transcribe audio using **faster-whisper** (small model) and burn them directly into the video or export as SRT.
+- **Smart Thumbnails:** Extract a frames from any specific second and overlay bold, centered text using **Pillow** to create click-worthy YouTube thumbnails.
 
 ### 🤖 Telegram Bot Interface
 
@@ -44,7 +51,7 @@ An async Telegram bot can run alongside FastAPI and act as a mobile-first contro
 
 ### 📅 Scheduled Uploads
 
-Schedule any upload for a specific date/time. The APScheduler background job fires every minute and uploads when the time arrives, preserving the full title/description/tags/privacy/webhook set at scheduling time.
+Schedule any upload for a specific date/time. The system utilizes the native YouTube API `publishAt` parameter. When scheduled, the video is uploaded immediately to YouTube as "private" and scheduled for public release at your chosen time, ensuring reliability without local background polling.
 
 ### 📋 Pipeline Presets
 
@@ -153,6 +160,8 @@ cd backend
 python -m venv venv
 venv\Scripts\activate        # macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
+# Optional: Install faster-whisper for subtitles
+pip install faster-whisper pillow
 uvicorn main:app --reload
 ```
 
@@ -249,6 +258,9 @@ Ensure `ffmpeg` is available in the build environment (Render provides it on Ubu
 | `GET`    | `/stats/disk`                         | Temp storage stats                         |
 | `GET`    | `/video/{video_id}/thumbnail`         | JPEG thumbnail                             |
 | `GET`    | `/video/{video_id}/file`              | Stream video file                          |
+| `POST`   | `/ai/subtitles`                       | Transcribe + Burn subtitles (Whisper)      |
+| `POST`   | `/ai/thumbnail`                       | Create thumbnail with text overlay (Pillow)|
+| `GET`    | `/health`                             | API + Telegram bot status                  |
 
 
 Temp files live in `backend/tmp/` and auto-purge after 1 hour.

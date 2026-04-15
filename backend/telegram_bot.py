@@ -1261,8 +1261,8 @@ async def _handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ── Bot lifecycle ─────────────────────────────────────────────────────────────
 
-async def _run_bot(token: str) -> None:
-    global _app
+def _build_application(token: str) -> Application:
+    """Build and configure the Application with all handlers registered."""
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", _start))
     app.add_handler(CommandHandler("menu", _menu))
@@ -1286,18 +1286,43 @@ async def _run_bot(token: str) -> None:
     app.add_handler(CallbackQueryHandler(_action_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_url))
     app.add_error_handler(_handle_error)
+    return app
+
+
+async def _run_bot(token: str) -> None:
+    """Start bot in polling mode (local dev only)."""
+    global _app
+    app = _build_application(token)
     _app = app
     _runtime["started_at"] = _now_utc()
     _runtime["last_error"] = ""
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
+    await app.updater.start_polling(drop_pending_updates=True)
 
 
 async def _run_bot_with_restart(token: str) -> None:
+    """Polling loop with restart — used in local dev only.
+
+    A Conflict error means another instance is already polling; in that case
+    we stop immediately instead of looping, because repeated restarts only
+    amplify the problem.
+    """
+    from telegram.error import Conflict as TelegramConflict
+
     while True:
         try:
             await _run_bot(token)
+        except TelegramConflict as exc:
+            # Another instance is already running. Stop the loop — do not restart.
+            _set_error(exc)
+            logger.error(
+                "Telegram Conflict: another bot instance is polling. "
+                "Stopping polling loop. This usually means two server "
+                "instances are running simultaneously. Use webhook mode "
+                "in production (set RENDER_EXTERNAL_URL or WEBHOOK_URL)."
+            )
+            return
         except Exception as exc:
             _runtime["restart_count"] = int(_runtime.get("restart_count", 0)) + 1
             _set_error(exc)
@@ -1323,6 +1348,7 @@ def get_telegram_runtime_status() -> dict[str, Any]:
 
 
 async def start_telegram_bot() -> None:
+    """Start in polling mode (local dev). On Render, call start_telegram_bot_webhook() instead."""
     global _bot_task, _allowed_chat_ids
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
@@ -1332,11 +1358,44 @@ async def start_telegram_bot() -> None:
     _bot_task = asyncio.create_task(_run_bot_with_restart(token))
 
 
+async def start_telegram_bot_webhook(webhook_url: str) -> None:
+    """Initialize bot in webhook mode (production/Render).
+
+    Telegram will POST updates to ``webhook_url``.  No polling loop is
+    started, so there is zero risk of the getUpdates Conflict error.
+    """
+    global _app, _allowed_chat_ids
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        logger.warning("TELEGRAM_BOT_TOKEN not set — bot disabled.")
+        return
+    _allowed_chat_ids = _parse_allowed_chat_ids()
+    app = _build_application(token)
+    _app = app
+    _runtime["started_at"] = _now_utc()
+    _runtime["last_error"] = ""
+    await app.initialize()
+    await app.start()
+    # Delete any stale webhook / polling sessions first, then register ours.
+    await app.bot.delete_webhook(drop_pending_updates=True)
+    await app.bot.set_webhook(url=webhook_url)
+    logger.info("Telegram webhook registered: %s", webhook_url)
+
+
+async def process_webhook_update(data: dict) -> None:
+    """Feed a raw JSON update dict (from the webhook POST) into the Application."""
+    if _app is None:
+        raise RuntimeError("Telegram bot is not initialized")
+    update = Update.de_json(data, _app.bot)
+    await _app.process_update(update)
+
+
 async def stop_telegram_bot() -> None:
     global _app, _bot_task
     if _app:
         try:
-            if _app.updater:
+            # Polling mode has an updater; webhook mode does not.
+            if _app.updater and _app.updater.running:
                 await _app.updater.stop()
             await _app.stop()
             await _app.shutdown()
