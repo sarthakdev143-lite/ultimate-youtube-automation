@@ -81,10 +81,26 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _fmt_dt(dt: datetime | None) -> str:
+def _fmt_dt(dt: datetime | str | None) -> str:
+    from datetime import timedelta, timezone
     if not dt:
         return "never"
-    return dt.isoformat().replace("+00:00", "Z")
+    if isinstance(dt, str):
+        try:
+            # Handle ISO strings like 2026-04-15T07:31:09.670925Z
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except ValueError:
+            return dt
+
+    # Ensure datetime is timezone-aware, defaulting to UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    # Convert to IST (UTC +5:30)
+    ist = timezone(timedelta(hours=5, minutes=30))
+    dt_ist = dt.astimezone(ist)
+    
+    return dt_ist.strftime("%b %d, %Y at %I:%M %p IST")
 
 
 def _fmt_age(dt: datetime | None) -> str:
@@ -319,7 +335,7 @@ async def _send_ready_message(update: Update, state: dict[str, Any], ai_fallback
     wm = _watermark_text()
 
     schedule_line = (
-        f"⏰ <b>Publish at:</b> <code>{_esc(scheduled_at)}</code>"
+        f"⏰ <b>Publish at:</b> <code>{_esc(_fmt_dt(scheduled_at))}</code>"
         if scheduled_at
         else "⚡ <b>Schedule:</b> Immediate upload"
     )
@@ -522,7 +538,10 @@ Original title: {title}
 Description: {description}
 Duration: {duration}s
 
-Return a JSON object with exactly these keys:
+STRICT RULES:
+1. If the Original title or Description is extremely short, generic, or empty (like just hashtags or "..."), DO NOT invent or hallucinate a topic (e.g., do NOT invent a tutorial about video editing if it's not mentioned).
+2. Just provide generic, viral, engaging YouTube metadata suitable for a short-form video edit or general viral video. Keep it broad and punchy.
+3. Return a JSON object with exactly these keys:
 - title: engaging YouTube title with emojis, max 90 characters
 - description: SEO-optimized description
 - tags: array of strings, no # symbol, max 30 items
@@ -828,7 +847,7 @@ async def _status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     scheduled_at = state.get("scheduled_at")
     tags_text = ", ".join(f"<code>{_esc(t)}</code>" for t in tags[:5]) if tags else "<i>none</i>"
     schedule_text = (
-        f"<code>{_esc(scheduled_at)}</code>" if scheduled_at else "<i>Immediate (no schedule)</i>"
+        f"<code>{_esc(_fmt_dt(scheduled_at))}</code>" if scheduled_at else "<i>Immediate (no schedule)</i>"
     )
     await update.effective_message.reply_text(
         f"📋 <b>Pending Draft</b>\n"
@@ -857,7 +876,7 @@ async def _pending_cmd(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     for chat_id, state in list(_pending.items())[:10]:
         lines.append(
             f"• Chat <code>{chat_id}</code>: {_esc(state.get('title', 'Untitled')[:40])}\n"
-            f"  Schedule: <code>{state.get('scheduled_at') or 'none'}</code>"
+            f"  Schedule: <code>{_fmt_dt(state.get('scheduled_at')) if state.get('scheduled_at') else 'none'}</code>"
         )
     await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
