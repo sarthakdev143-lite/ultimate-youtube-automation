@@ -49,12 +49,19 @@ def download_video(body: DownloadBody):
         "outtmpl": out_template,
         "merge_output_format": "mp4",
         "format": "bestvideo+bestaudio/best",
+        "extractor_args": {},
+        "retries": 3,
+        "retry_timeout": 5,
     }
+    if platform == "youtube":
+        ydl_opts["extractor_args"]["youtube"] = {
+            "player_client": ["android", "default"],
+        }
     if needs_cookies(platform):
         ydl_opts["cookiefile"] = str(COOKIES_PATH)
     if platform == "tiktok":
         ydl_opts["format"] = "bestvideo[vcodec^=h264]+bestaudio/best"
-        ydl_opts["extractor_args"] = {"tiktok": {"webpage_download": ["True"]}}
+        ydl_opts["extractor_args"]["tiktok"] = {"webpage_download": ["True"]}
 
     info = None
     try:
@@ -62,8 +69,10 @@ def download_video(body: DownloadBody):
             info = ydl.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as exc:
         msg = str(exc)
-        if any(k in msg.lower() for k in ("private", "login", "cookie", "unavailable")):
-            detail = "Download failed: content is private/unavailable, or login is required."
+        if any(k in msg.lower() for k in ("429", "too many requests", "rate limit")):
+            detail = "Download failed: YouTube rate limit. Wait a few minutes and try again."
+        elif any(k in msg.lower() for k in ("private", "login", "cookie", "unavailable", "sign in")):
+            detail = "Download failed: content is private, requires login, or is unavailable."
         else:
             detail = f"Download failed: {msg}"
         raise HTTPException(status_code=400, detail=detail) from exc

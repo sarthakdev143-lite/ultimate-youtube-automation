@@ -29,7 +29,7 @@ _pending_oauth_flows: dict[str, dict[str, str | float]] = {}
 
 _PLATFORM_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("instagram", re.compile(r"^https?://(?:www\.)?instagram\.com/(?:reel|reels|p|tv)/[\w-]+", re.IGNORECASE)),
-    ("snapchat",  re.compile(r"^https?://(?:www\.)?snapchat\.com/spotlight/[\w-]+", re.IGNORECASE)),
+    ("snapchat",  re.compile(r"^https?://(?:[\w-]+\.)?snapchat\.com/(?:spotlight|p/|t/|add/).+", re.IGNORECASE)),
     ("tiktok",    re.compile(r"^https?://(?:www\.)?(?:tiktok\.com|vm\.tiktok\.com)/", re.IGNORECASE)),
     ("youtube",   re.compile(r"^https?://(?:www\.)?(?:youtube\.com/shorts/|youtu\.be/)[\w-]+", re.IGNORECASE)),
     ("twitter",   re.compile(r"^https?://(?:www\.)?(?:twitter\.com|x\.com)/\w+/status/\d+", re.IGNORECASE)),
